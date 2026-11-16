@@ -1,10 +1,13 @@
 /* ───────────── 기본 설정 ───────────── */
 const LC = '#00a84d';                       // 노선 색
 const FONT = '"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif';
-const CARS = [-20, 0, 20];                  // 객차 중심 x
+const MAXC = 8;                             // 최대 칸 수
+const CARS = [];                            // 객차 중심 x (1호차 = 꼬리칸 → 머리칸)
 const DOORS = [-7.2, -2.4, 2.4, 7.2];       // 객차 안 출입문 x
 const ZC = -1.7;                            // 객차 중심 z
-const doorXs = []; CARS.forEach(c => DOORS.forEach(d => doorXs.push(c + d)));
+const doorXs = []; let HP = 34;             // 출입문 x, 승강장 길이의 절반
+const carOf = x => Math.max(0, Math.min(CARS.length - 1, Math.round((x - CARS[0]) / 20)));
+const PLAT = { vend: [], benches: [], bins: [], pillars: [], psdAds: [], wall: [] };   // 승강장 시설 위치(물건 배치·자판기에 쓴다)
 const LIGHT_K = 4.2, EXPOSURE = 0.74;         // 조명 띠 밝기(HDR), 노출
 
 const canvas = document.getElementById('c');
@@ -21,7 +24,15 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const sG = new THREE.Group(), tG = new THREE.Group(); scene.add(sG, tG);   // 역(고정)과 열차(움직임)
-const statS = new THREE.Group(), statT = new THREE.Group(); let stat = statS;   // 정적 메시(나중에 병합)
+const statS = new THREE.Group(); let stat = statS;   // 정적 메시(나중에 병합)
+const carG = [], carStat = []; let sealG = null, hemi = null;     // 칸마다 따로 묶는다(폐쇄된 칸은 역에 남는다)
+// 조명은 개수를 고정해 두고 보는 사람 가까이로 옮겨 쓴다(칸 수가 늘어도 부담이 같다)
+const pLights = [0, 1, 2, 3].map(() => { const l = new THREE.PointLight(0xfff7ea, 8.5, 30, 2); l.position.set(0, 2.7, 3.4); return l; });
+const tLights = [0, 1, 2].map(() => { const l = new THREE.PointLight(0xf2f7ff, 5.2, 17, 2); l.position.set(0, 1.5, -1.7); return l; });
+function placeLights(sx, tx) {
+  const j = Math.floor((sx - 8.5) / 17); pLights.forEach((l, i) => { const x = 8.5 + 17 * (j - 1 + i); l.position.x = x; l.intensity = Math.abs(x) < HP ? 8.5 : 0; });
+  const n = CARS.length, c0 = Math.max(0, Math.min(n - 3, carOf(tx) - 1)); tLights.forEach((l, i) => { const c = c0 + i, on = c < n && c >= firstOpen; l.position.x = CARS[Math.min(c, n - 1)]; l.intensity = on ? 5.2 : 0; });
+}
 const TL = 544, TRAVEL = 704;                     // 터널 길이(한쪽), 역 사이 거리. 16m 무늬의 배수여야 이음매가 안 보인다
 const dyn = new THREE.Group(); scene.add(dyn);     // 움직이는 메시(문)
 const blocks = [];                                 // 충돌 상자
@@ -31,11 +42,13 @@ const block = (x1, x2, z1, z2, o = {}) => blocks.push({ x1: Math.min(x1, x2), x2
 const ZONES = { p: { min: new THREE.Vector3(-400, 0, 0), max: new THREE.Vector3(400, 3, 7.5), pos: new THREE.Vector3(0, 1.5, 3.75), mats: [] },
                 t: { min: new THREE.Vector3(-400, 0, -3.16), max: new THREE.Vector3(400, 2.19, -0.24), pos: new THREE.Vector3(0, 1.35, -1.7), mats: [] } };
 let ZONE = 'p';
+function setCars(n) { CARS.length = 0; doorXs.length = 0; for (let i = 0; i < n; i++) CARS.push((i - (n - 1) / 2) * 20); CARS.forEach(c => DOORS.forEach(d => doorXs.push(c + d))); HP = 10 * n + 4; ZONES.t.pos.x = CARS[n >> 1]; }
+setCars(3);
 function zoned(m) {
   const z = ZONES[ZONE]; z.mats.push(m);
   m.onBeforeCompile = sh => {
     sh.uniforms.boxMin = { value: z.min }; sh.uniforms.boxMax = { value: z.max }; sh.uniforms.probePos = { value: z.pos };
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n\tvWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;');
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n\tvec4 wPos4 = vec4( transformed, 1.0 );\n#ifdef USE_INSTANCING\n\twPos4 = instanceMatrix * wPos4;\n#endif\n\tvWPos = ( modelMatrix * wPos4 ).xyz;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform vec3 boxMin;\nuniform vec3 boxMax;\nuniform vec3 probePos;')
       .replace('#include <envmap_physical_pars_fragment>', THREE.ShaderChunk.envmap_physical_pars_fragment.replace('reflectVec = inverseTransformDirection( reflectVec, viewMatrix );',
         `reflectVec = inverseTransformDirection( reflectVec, viewMatrix );
@@ -50,7 +63,7 @@ function zoned(m) {
 }
 function captureProbes() {
   const cap = (z, size) => { const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType }), cam = new THREE.CubeCamera(0.05, 120, rt); cam.position.copy(z.pos); cam.update(renderer, scene); const pm = pmrem.fromCubemap(rt.texture); rt.dispose(); return pm.texture; };
-  const p = cap(ZONES.p, 512), t = cap(ZONES.t, 256); sG.position.x = 304; sG.updateMatrixWorld(true); const tt = cap(ZONES.t, 256); sG.position.x = 0;      // 열차는 역과 터널 두 가지 반사를 따로 찍는다
+  placeLights(0, ZONES.t.pos.x); const p = cap(ZONES.p, 512), t = cap(ZONES.t, 256); sG.position.x = 304; sG.updateMatrixWorld(true); const tt = cap(ZONES.t, 256); sG.position.x = 0;      // 열차는 역과 터널 두 가지 반사를 따로 찍는다
   for (const o of [ZONES.p.tex, ZONES.t.tex, ZONES.t.tun]) if (o) o.dispose();
   ZONES.p.tex = p; ZONES.t.tex = t; ZONES.t.tun = tt; ZONES.t.cur = null;
   for (const m of ZONES.p.mats) { if (!m.envMap) m.needsUpdate = true; m.envMap = p; }
@@ -208,7 +221,7 @@ function makeSigns() {
   });
   T.col = cv(256, 256, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.strokeStyle = LC; g.lineWidth = 16; g.strokeRect(8, 8, w - 16, h - 16); tx(g, '강남', 128, 112, 84, '#16181a', { w: 900 }); tx(g, 'Gangnam', 128, 190, 26, '#555', { w: 500 }); });
   T.nameband = cv(512, 64, (g, w, h) => { g.fillStyle = LC; g.fillRect(0, 0, w, h); tx(g, '강남', 170, 34, 40, '#fff', { w: 900 }); tx(g, 'Gangnam', 330, 35, 26, '#d9f3e4', { w: 500, ls: 2 }); });
-  T.num = {}; doorXs.forEach((x, i) => { const n = `${(i / 4 | 0) + 1}-${i % 4 + 1}`; T.num[i] = cv(128, 64, (g, w, h) => { g.fillStyle = LC; rr(g, 0, 0, w, h, 12); g.fill(); tx(g, n, 64, 34, 40, '#fff', { w: 900 }); }); });
+  T.num = {}; Array.from({ length: MAXC * 4 }).forEach((x, i) => { const n = `${(i / 4 | 0) + 1}-${i % 4 + 1}`; T.num[i] = cv(128, 64, (g, w, h) => { g.fillStyle = LC; rr(g, 0, 0, w, h, 12); g.fill(); tx(g, n, 64, 34, 40, '#fff', { w: 900 }); }); });
   T.lcd = cv(1024, 284, (g, w, h) => {             // 승강장 행선 안내기
     g.fillStyle = '#040506'; g.fillRect(0, 0, w, h);
     g.fillStyle = LC; rr(g, 28, 26, 150, 62, 31); g.fill(); tx(g, '2호선', 103, 59, 34, '#fff');
@@ -287,7 +300,12 @@ function makeSigns() {
   T.emer = cv(256, 256, (g, w, h) => { g.fillStyle = '#d2382d'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.fillRect(14, 14, w - 28, 76); tx(g, '비상 핸들', 128, 54, 40, '#d2382d', { w: 900 }); tx(g, '비상시 덮개를 열고', 128, 132, 24, '#fff', { w: 700 }); tx(g, '핸들을 돌린 뒤', 128, 168, 24, '#fff', { w: 700 }); tx(g, '문을 손으로 여세요', 128, 204, 24, '#fff', { w: 700 }); });
   T.notice = cv(256, 256, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.fillStyle = '#d9322b'; g.fillRect(0, 0, w, 64); tx(g, '비상 통화 장치', 128, 34, 28, '#fff'); circ(g, 128, 150, 42, '#d9322b'); tx(g, 'SOS', 128, 153, 30, '#fff', { w: 900 }); tx(g, '위급할 때 누르세요', 128, 224, 20, '#333', { w: 500 }); });
   T.vent = cv(64, 64, (g, w, h) => { g.fillStyle = '#5c6065'; g.fillRect(0, 0, w, h); g.fillStyle = '#26282b'; for (let i = 0; i < 8; i++) g.fillRect(0, i * 8 + 1, w, 4); }, true);
-  T.carno = CARS.map((c, i) => cv(256, 128, (g, w, h) => { g.fillStyle = '#f4f4f2'; rr(g, 0, 0, w, h, 14); g.fill(); tx(g, `2${i + 3}71`, 128, 46, 44, '#222', { w: 900 }); tx(g, i == 1 ? '약냉방칸' : `${i + 1}호차`, 128, 98, 26, i == 1 ? '#1f6fd0' : '#555', { w: 700 }); }));
+  T.carno = Array.from({ length: MAXC }, (c, i) => cv(256, 128, (g, w, h) => { g.fillStyle = '#f4f4f2'; rr(g, 0, 0, w, h, 14); g.fill(); tx(g, `2${i + 3}71`, 128, 46, 44, '#222', { w: 900 }); tx(g, i == 1 ? '약냉방칸' : `${i + 1}호차`, 128, 98, 26, i == 1 ? '#1f6fd0' : '#555', { w: 700 }); }));
+  T.closed = cv(256, 512, (g, w, h) => {            // 폐쇄된 칸으로 가는 통로를 막는 문
+    g.fillStyle = '#3a3e43'; g.fillRect(0, 0, w, h); g.fillStyle = '#2c2f33'; g.fillRect(10, 10, w - 20, h - 20);
+    for (const y of [26, h - 70]) { g.save(); g.beginPath(); g.rect(18, y, w - 36, 44); g.clip(); g.fillStyle = '#e9b800'; g.fillRect(18, y, w - 36, 44); g.fillStyle = '#17181a'; for (let x = -60; x < w; x += 44) { g.beginPath(); g.moveTo(x, y + 44); g.lineTo(x + 22, y + 44); g.lineTo(x + 66, y); g.lineTo(x + 44, y); g.fill(); } g.restore(); }
+    g.fillStyle = '#c9302a'; rr(g, 30, 150, w - 60, 150, 12); g.fill(); tx(g, '폐쇄', 128, 212, 84, '#fff', { w: 900 }); tx(g, 'CLOSED', 128, 276, 24, '#ffd9d4', { w: 700, ls: 4 });
+    tx(g, '이 통로는 지나갈 수', 128, 348, 22, '#d5d8dc', { w: 700 }); tx(g, '없습니다', 128, 380, 22, '#d5d8dc', { w: 700 }); });
   // 바닥과 벽에 곱해 넣는 얼룩·그늘
   T.gFloor = cv(4096, 480, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); const r = rng(31), X = x => (x + 34) / 68 * w, Z = z => z / 7.5 * h;
     const sh = (x0, z0, x1, z1, spread, a) => { g.save(); g.shadowColor = `rgba(40,34,26,${a})`; g.shadowBlur = spread; g.fillStyle = `rgba(40,34,26,${a})`; g.fillRect(X(x0), Z(z0), X(x1) - X(x0), Z(z1) - Z(z0)); g.restore(); };
@@ -309,8 +327,26 @@ function makeSigns() {
 }
 
 /* ───────────── 장면 구성 ───────────── */
+function mergeStatic(src, dst, chunk, cx0) {          // 재질별로 한 덩어리로 합친다. chunk가 있으면 구간별로 나눠, 안 보이는 구간은 그리지 않는다
+  src.updateMatrixWorld(true); const by = new Map();
+  src.traverse(o => { if (!o.isMesh) return; const g = o.geometry.clone().applyMatrix4(o.matrixWorld); if (o.matrixWorld.determinant() < 0) { const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i]; idx[i] = idx[i + 2]; idx[i + 2] = t; } }
+    let key = o.material.uuid, cx = cx0 ?? 0, cull = cx0 != null;
+    if (chunk) { g.computeBoundingBox(); const b = g.boundingBox; if (b.max.x - b.min.x < chunk * 0.8) { const k = Math.floor((b.min.x + b.max.x) / 2 / chunk + 0.5); key += ':' + k; cx = k * chunk; cull = true; } }
+    if (!by.has(key)) by.set(key, { m: o.material, gs: [], cx, cull }); by.get(key).gs.push(g); });
+  for (const { m, gs, cx, cull } of by.values()) { const geo = gs.length > 1 ? mergeGeometries(gs) : gs[0]; if (gs.length > 1) for (const g of gs) g.dispose(); if (cx) geo.translate(-cx, 0, 0);
+    const me = new THREE.Mesh(geo, m); me.position.x = cx; me.updateMatrix(); me.renderOrder = m.transparent ? 2 : 0; me.frustumCulled = cull; me.matrixAutoUpdate = false; dst.add(me); }
+  src.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); src.clear();
+}
+function clearWorld() {                               // 칸 수를 바꿔 다시 지을 때: 이전에 만든 것을 모두 치운다
+  const kill = o => { if (o.geometry) o.geometry.dispose(); if (o.material) for (const m of [].concat(o.material)) m.dispose(); if (o.isInstancedMesh) o.dispose(); };
+  for (const l of pLights.concat(tLights)) l.removeFromParent();
+  for (const g of [sG, tG, dyn, statS, ...carStat]) { g.traverse(kill); g.clear(); }
+  blocks.length = 0; ZONES.p.mats.length = 0; ZONES.t.mats.length = 0; ZONES.t.cur = null;
+}
 function build(T, S) {
-  const PI = Math.PI;
+  const PI = Math.PI, H = HP;
+  for (const k in PLAT) PLAT[k].length = 0;
+  carG.length = 0; carStat.length = 0; CARS.forEach(() => { carG.push(new THREE.Group()); carStat.push(new THREE.Group()); });
   const M = (color, rough, metal, o = {}) => zoned(new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, ...o }));
   const P = (s, rough, metal, o = {}) => zoned(new THREE.MeshStandardMaterial({ map: s.map, normalMap: s.normalMap, roughnessMap: s.roughnessMap, roughness: rough, metalness: metal, ...o }));
   const lit = (map, k = 1.25) => new THREE.MeshBasicMaterial({ map, color: new THREE.Color(k, k, k) });
@@ -346,15 +382,17 @@ function build(T, S) {
   const wide = i => lit(T.wide[((i % ADS.length) + ADS.length) % ADS.length]), tall = i => lit(T.tall[((i % ADS.length) + ADS.length) % ADS.length]), strip = i => lit(T.strip[((i % ADS.length) + ADS.length) % ADS.length], 1.15);
 
   /* ── 승강장 구조 ── */
-  bb(-34, 34, -1.2, 0, -0.1, 7.5, mat.floor);
-  bb(-34, 34, 3.0, 3.15, -0.1, 7.5, mat.ceil);
-  bb(-34, 34, 0, 3, 7.5, 7.7, mat.wall);
-  bb(-34, 34, 0, 0.16, 7.468, 7.5, mat.dado);
-  bb(-34, 34, 2.36, 2.5, 7.486, 7.5, mat.lc);
-  for (let x = -30.5; x < 33; x += 5.5) sign(0.9, 0.11, printed(T.nameband, 0.4), x, 2.43, 7.4855, PI);
-  block(-36, 36, 7.5, 9);
-  { const m = new THREE.Mesh(new THREE.PlaneGeometry(68, 7.5), multiply(T.gFloor)); m.rotation.x = -PI / 2; m.position.set(0, 0.0085, 3.75); m.renderOrder = 1; sG.add(m);
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(68, 3), multiply(T.gWall)); w.rotation.y = PI; w.position.set(0, 1.5, 7.497); w.renderOrder = 1; sG.add(w); }
+  bb(-H, H, -1.2, 0, -0.1, 7.5, mat.floor);
+  bb(-H, H, 3.0, 3.15, -0.1, 7.5, mat.ceil);
+  bb(-H, H, 0, 3, 7.5, 7.7, mat.wall);
+  bb(-H, H, 0, 0.16, 7.468, 7.5, mat.dado);
+  bb(-H, H, 2.36, 2.5, 7.486, 7.5, mat.lc);
+  { const nbM = printed(T.nameband, 0.4); for (let x = -H + 3.5; x < H - 1; x += 5.5) sign(0.9, 0.11, nbM, x, 2.43, 7.4855, PI); }
+  block(-H - 2, H + 2, 7.5, 9);
+  { const k = Math.max(1, Math.round(H / 34)), L = 2 * H / k, fm = multiply(T.gFloor), wm = multiply(T.gWall);      // 얼룩 무늬는 68m 단위로 이어 붙인다
+    for (let i = 0; i < k; i++) { const cx = -H + L * (i + 0.5);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(L, 7.5), fm); m.rotation.x = -PI / 2; m.position.set(cx, 0.0085, 3.75); m.renderOrder = 1; sG.add(m);
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(L, 3), wm); w.rotation.y = PI; w.position.set(cx, 1.5, 7.497); w.renderOrder = 1; sG.add(w); } }
   // 선로부와 터널 벽
   bb(-TL, TL, -1.2, 4, -4.15, -3.95, mat.tunnel);
   bb(-TL, TL, -1.3, -1.2, -3.95, -0.1, mat.black);
@@ -363,25 +401,24 @@ function build(T, S) {
   for (const y of [0.9, 2.15, 2.5]) { bb(-TL, TL, y, y + 0.02, -3.95, -3.8, mat.dark); for (let k = 0; k < 4; k++) tubeX(-TL, TL, y + 0.04, -3.92 + k * 0.035, 0.012, mat.rubber); }
   for (let x = -TL + 4; x < TL; x += 4) bb(x - 0.02, x + 0.02, 0.86, 2.54, -3.95, -3.9, mat.dark);
   // 역 바깥 터널: 승강장 쪽에도 벽이 서고, 16m마다 등이 달린다
-  for (const s of [-1, 1]) { const a = s * 34.2, b = s * TL;
+  for (const s of [-1, 1]) { const a = s * (H + 0.2), b = s * TL;
     bb(a, b, -1.2, 4, 0.35, 0.6, mat.tunnel); bb(a, b, -1.3, -1.2, -0.1, 0.6, mat.black); bb(a, b, 3.0, 3.15, -0.1, 0.6, mat.black);
     bb(a, b, 1.5, 1.52, 0.2, 0.35, mat.dark); for (let k = 0; k < 3; k++) tubeX(a, b, 1.56, 0.32 - k * 0.035, 0.012, mat.rubber); bb(a, b, -0.2, -0.12, 0.05, 0.35, mat.stone); }
   for (let x = -TL + 8; x < TL; x += 16) {
-    if (Math.abs(x) > 48) { bb(x - 0.32, x + 0.32, 2.74, 2.82, -3.95, -3.85, mat.dark); bb(x - 0.28, x + 0.28, 2.715, 2.74, -3.94, -3.86, mat.light); bb(x + 3.9, x + 4.1, 1.2, 1.5, -3.95, -3.94, mat.white); }
-    if (Math.abs(x) > 36) { bb(x - 0.32, x + 0.32, 2.74, 2.82, 0.25, 0.35, mat.dark); bb(x - 0.28, x + 0.28, 2.715, 2.74, 0.26, 0.34, mat.light); bb(x - 4.1, x - 3.9, 1.0, 1.25, 0.34, 0.35, mat.lightG); } }
-  [-24, -8, 8, 24].forEach((x, i) => { bb(x - 1.66, x + 1.66, 0.94, 2.1, -3.95, -3.9, mat.steelD); sign(3.2, 1.07, wide(i * 3 + 1), x, 1.52, -3.895, 0); });
+    if (Math.abs(x) > H + 14) { bb(x - 0.32, x + 0.32, 2.74, 2.82, -3.95, -3.85, mat.dark); bb(x - 0.28, x + 0.28, 2.715, 2.74, -3.94, -3.86, mat.light); bb(x + 3.9, x + 4.1, 1.2, 1.5, -3.95, -3.94, mat.white); }
+    if (Math.abs(x) > H + 2) { bb(x - 0.32, x + 0.32, 2.74, 2.82, 0.25, 0.35, mat.dark); bb(x - 0.28, x + 0.28, 2.715, 2.74, 0.26, 0.34, mat.light); bb(x - 4.1, x - 3.9, 1.0, 1.25, 0.34, 0.35, mat.lightG); } }
+  { const far = []; for (let x = 8; x <= H - 10; x += 16) far.push(-x, x); far.sort((a, b) => a - b).forEach((x, i) => { bb(x - 1.66, x + 1.66, 0.94, 2.1, -3.95, -3.9, mat.steelD); sign(3.2, 1.07, wide(i * 3 + 1), x, 1.52, -3.895, 0); }); }
 
   // 천장: 이어지는 조명 띠, 스프링클러, 감지기, 스피커, 카메라
-  for (const z of [1.5, 3.3, 6.0]) { bb(-33.7, 33.7, 2.993, 3.0, z - 0.125, z + 0.125, mat.dark); for (let x = -33.6; x < 33; x += 2.4) bb(x, x + 2.32, 2.986, 2.994, z - 0.09, z + 0.09, mat.light); }
-  for (let x = -32; x <= 32; x += 3.2) for (const z of [2.4, 5.15]) { tubeY(x, z, 2.965, 3.0, 0.012, mat.chrome, 8); tubeY(x, z, 2.955, 2.967, 0.028, mat.chrome, 10); }
-  for (let x = -30; x <= 30; x += 7.5) { tubeY(x, 4.0, 2.968, 3.0, 0.06, mat.white, 16); tubeY(x, 4.0, 2.962, 2.969, 0.025, mat.lightR, 8); }
-  for (let x = -27; x <= 27; x += 9) { tubeY(x, 2.4, 2.988, 3.0, 0.11, mat.white, 20); tubeY(x, 2.4, 2.985, 2.989, 0.085, mat.dark, 20); }
-  [[-31, 3.2], [-12, 0.9], [8, 0.9], [31, 3.2], [0, 6.4]].forEach(([x, z]) => { tubeY(x, z, 2.94, 3.0, 0.07, mat.white, 16); ball(x, 2.935, z, 0.062, mat.black); });
+  for (const z of [1.5, 3.3, 6.0]) { bb(-H + 0.3, H - 0.3, 2.993, 3.0, z - 0.125, z + 0.125, mat.dark); for (let x = -H + 0.4; x < H - 1; x += 2.4) bb(x, x + 2.32, 2.986, 2.994, z - 0.09, z + 0.09, mat.light); }
+  for (let x = -H + 2; x <= H - 2; x += 3.2) for (const z of [2.4, 5.15]) { tubeY(x, z, 2.965, 3.0, 0.012, mat.chrome, 8); tubeY(x, z, 2.955, 2.967, 0.028, mat.chrome, 10); }
+  for (let x = -H + 4; x <= H - 4; x += 7.5) { tubeY(x, 4.0, 2.968, 3.0, 0.06, mat.white, 16); tubeY(x, 4.0, 2.962, 2.969, 0.025, mat.lightR, 8); }
+  for (let x = -H + 7; x <= H - 7; x += 9) { tubeY(x, 2.4, 2.988, 3.0, 0.11, mat.white, 20); tubeY(x, 2.4, 2.985, 2.989, 0.085, mat.dark, 20); }
+  [[-H + 3, 3.2], [H - 3, 3.2], ...CARS.map((c, i) => i % 3 == 1 ? [c, 6.4] : [c + (i % 3 ? -12 : 8), 0.9])].forEach(([x, z]) => { tubeY(x, z, 2.94, 3.0, 0.07, mat.white, 16); ball(x, 2.935, z, 0.062, mat.black); });
   // 점자블록
-  bb(-34, 34, 0, 0.006, 0.45, 0.75, mat.dot);
-  bb(7.05, 7.35, 0, 0.006, 0.75, 3.45, mat.lineV);
-  bb(7.05, 7.35, 0, 0.007, 3.45, 3.75, mat.dot);
-  bb(7.35, 33.6, 0, 0.006, 3.45, 3.75, mat.lineH);
+  bb(-H, H, 0, 0.006, 0.45, 0.75, mat.dot);
+  { const gx = doorXs.reduce((a, b) => Math.abs(b - 7.2) < Math.abs(a - 7.2) ? b : a);
+    bb(gx - 0.15, gx + 0.15, 0, 0.006, 0.75, 3.45, mat.lineV); bb(gx - 0.15, gx + 0.15, 0, 0.007, 3.45, 3.75, mat.dot); bb(gx + 0.15, H - 0.4, 0, 0.006, 3.45, 3.75, mat.lineH); }
   // 승차 위치 표시와 발빠짐 주의
   const boardM = zoned(new THREE.MeshStandardMaterial({ map: T.board, transparent: true, roughness: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
   const gapM = zoned(new THREE.MeshStandardMaterial({ map: T.gap, transparent: true, roughness: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
@@ -391,7 +428,7 @@ function build(T, S) {
   // 기둥: 법랑 패널, 스테인리스 모서리, 세로 광고
   const colM = printed(T.col, 0.4);
   let ci = 0;
-  for (let x = -28; x <= 28; x += 8, ci++) {
+  for (let x = -H + 6; x <= H - 6; x += 8, ci++) { PLAT.pillars.push(x);
     bb(x - 0.35, x + 0.35, 0.3, 3, 4.3, 5.0, mat.wall); bb(x - 0.36, x + 0.36, 0, 0.3, 4.29, 5.01, mat.steel);
     for (const dx of [-0.35, 0.35]) for (const dz of [4.3, 5.0]) bb(x + dx - 0.012, x + dx + 0.012, 0.3, 2.3, dz - 0.012, dz + 0.012, mat.steel);
     bb(x - 0.36, x + 0.36, 2.3, 2.6, 4.29, 5.01, mat.lc);
@@ -403,32 +440,32 @@ function build(T, S) {
   }
   // 벽면: 광고판, 역명판과 의자, 안내도, 노선도, 시각표, 설비
   const adBox = (x, w, i, h = 1.5) => { bb(x - w / 2 - 0.06, x + w / 2 + 0.06, 1.5 - h / 2 - 0.06, 1.5 + h / 2 + 0.06, 7.42, 7.5, mat.steelD); sign(w, h, wide(i), x, 1.5, 7.415, PI); };
-  [[-27.6, 3.0, 0], [-10, 3.0, 2], [6, 3.0, 4], [22, 3.0, 6], [29.9, 2.4, 9]].forEach(([x, w, i]) => adBox(x, w, i, w / 2));
   const bench = x => { bb(x - 1.24, x + 1.24, 1.56, 2.2, 7.45, 7.5, mat.steelD); sign(2.4, 0.6, lit(T.station, 1.15), x, 1.88, 7.445, PI);
     for (let i = 0; i < 5; i++) bb(x - 0.95, x + 0.95, 0.42, 0.45, 6.99 + i * 0.09, 7.065 + i * 0.09, mat.wood); for (let i = 0; i < 3; i++) bb(x - 0.95, x + 0.95, 0.56 + i * 0.11, 0.645 + i * 0.11, 7.405, 7.435, mat.wood);
     [-0.85, 0, 0.85].forEach(d => { bb(x + d - 0.025, x + d + 0.025, 0, 0.42, 7.03, 7.08, mat.steelD); bb(x + d - 0.025, x + d + 0.025, 0, 0.9, 7.39, 7.44, mat.steelD); bb(x + d - 0.025, x + d + 0.025, 0.385, 0.42, 7.03, 7.44, mat.steelD); });
     [-0.95, -0.32, 0.32, 0.95].forEach(d => { bb(x + d - 0.012, x + d + 0.012, 0.45, 0.63, 7.0, 7.02, mat.steel); bb(x + d - 0.012, x + d + 0.012, 0.61, 0.63, 7.0, 7.4, mat.steel); });
-    block(x - 0.95, x + 0.95, 6.98, 7.5); };
-  bench(-18); bench(14);
+    block(x - 0.95, x + 0.95, 6.98, 7.5); PLAT.benches.push(x); };
   const board = (x, w, h, tex, k = 1.1) => { bb(x - w / 2 - 0.05, x + w / 2 + 0.05, 1.5 - h / 2 - 0.05, 1.5 + h / 2 + 0.05, 7.44, 7.5, mat.steelD); sign(w, h, lit(tex, k), x, 1.5, 7.435, PI); };
-  board(-2, 1.6, 1.2, T.map); board(-22.4, 1.9, 1.19, T.linemap); board(11.2, 1.0, 1.25, T.timetable);
-  const vending = (x, tex) => { bb(x - 0.5, x + 0.5, 0, 1.9, 6.78, 7.5, mat.dark); sign(0.96, 1.86, lit(tex, 1.2), x, 0.95, 6.775, PI); bb(x - 0.5, x + 0.5, 1.9, 1.94, 6.76, 7.5, mat.steelD); block(x - 0.5, x + 0.5, 6.78, 7.5); };
-  vending(0.7, T.vend); vending(17, T.vend2);
-  bb(-5.3, -4.5, 0, 1.9, 7.1, 7.5, mat.steelD); sign(0.78, 1.86, printed(T.cab, 0.35), -4.9, 0.95, 7.095, PI); block(-5.3, -4.5, 7.1, 7.5);
-  [3.0, 3.48].forEach((x, i) => { bb(x, x + 0.44, 0, 0.9, 7.06, 7.46, mat.steel); bb(x + 0.1, x + 0.34, 0.6, 0.72, 7.052, 7.06, mat.black); bb(x - 0.005, x + 0.445, 0.9, 0.93, 7.055, 7.465, mat.steelD); sign(0.36, 0.18, printed(T.bin[i], 0.5), x + 0.22, 0.36, 7.058, PI); });
-  block(3.0, 3.92, 7.06, 7.5);
-  for (const x of [-31.6, 26.4]) { bb(x - 0.42, x + 0.42, 0.3, 1.74, 7.44, 7.5, mat.red); sign(0.72, 1.24, printed(T.hydrant, 0.4), x, 1.0, 7.438, PI); ball(x, 1.95, 7.46, 0.055, mat.lightR); tubeZ(x + 0.22, 1.95, 7.42, 7.5, 0.07, mat.red); }
-  bb(-14.3, -13.7, 0.7, 1.7, 7.36, 7.5, mat.white); sign(0.56, 0.92, printed(T.aed, 0.35), -14, 1.2, 7.358, PI);
-  bb(-13.3, -12.9, 1.0, 1.56, 7.42, 7.5, mat.red); sign(0.38, 0.53, printed(T.sos, 0.4), -13.1, 1.28, 7.418, PI);
-  for (const x of [9.3, 9.62, 24.9]) { tubeY(x, 7.36, 0.06, 0.56, 0.065, mat.red, 14); tubeY(x, 7.36, 0.56, 0.64, 0.03, mat.dark, 10); }
-  bb(9.12, 9.8, 0, 0.06, 7.24, 7.48, mat.dark); bb(24.72, 25.08, 0, 0.06, 7.24, 7.48, mat.dark); sign(0.3, 0.3, printed(T.fire, 0.4), 9.46, 1.0, 7.484, PI); block(9.1, 9.82, 7.24, 7.5);
+  const vending = (x, tex) => { bb(x - 0.5, x + 0.5, 0, 1.9, 6.78, 7.5, mat.dark); sign(0.96, 1.86, lit(tex, 1.2), x, 0.95, 6.775, PI); bb(x - 0.5, x + 0.5, 1.9, 1.94, 6.76, 7.5, mat.steelD); block(x - 0.5, x + 0.5, 6.78, 7.5); PLAT.vend.push(x); };
+  const cabM = printed(T.cab, 0.35), hydM = printed(T.hydrant, 0.4), aedM = printed(T.aed, 0.35), sosM = printed(T.sos, 0.4), fireM = printed(T.fire, 0.4), binM = [0, 1].map(i => printed(T.bin[i], 0.5));
+  const cabinet = x => { bb(x - 0.4, x + 0.4, 0, 1.9, 7.1, 7.5, mat.steelD); sign(0.78, 1.86, cabM, x, 0.95, 7.095, PI); block(x - 0.4, x + 0.4, 7.1, 7.5); };
+  const bins = x0 => { [x0, x0 + 0.48].forEach((x, i) => { bb(x, x + 0.44, 0, 0.9, 7.06, 7.46, mat.steel); bb(x + 0.1, x + 0.34, 0.6, 0.72, 7.052, 7.06, mat.black); bb(x - 0.005, x + 0.445, 0.9, 0.93, 7.055, 7.465, mat.steelD); sign(0.36, 0.18, binM[i], x + 0.22, 0.36, 7.058, PI); PLAT.bins.push(x + 0.22); }); block(x0, x0 + 0.92, 7.06, 7.5); };
+  const hydrant = x => { bb(x - 0.42, x + 0.42, 0.3, 1.74, 7.44, 7.5, mat.red); sign(0.72, 1.24, hydM, x, 1.0, 7.438, PI); ball(x, 1.95, 7.46, 0.055, mat.lightR); tubeZ(x + 0.22, 1.95, 7.42, 7.5, 0.07, mat.red); };
+  const aed = x => { bb(x - 0.3, x + 0.3, 0.7, 1.7, 7.36, 7.5, mat.white); sign(0.56, 0.92, aedM, x, 1.2, 7.358, PI); bb(x + 0.7, x + 1.1, 1.0, 1.56, 7.42, 7.5, mat.red); sign(0.38, 0.53, sosM, x + 0.9, 1.28, 7.418, PI); };
+  const ext = (x, pair) => { for (const e of pair ? [x, x + 0.32] : [x]) { tubeY(e, 7.36, 0.06, 0.56, 0.065, mat.red, 14); tubeY(e, 7.36, 0.56, 0.64, 0.03, mat.dark, 10); }
+    if (pair) { bb(x - 0.18, x + 0.5, 0, 0.06, 7.24, 7.48, mat.dark); sign(0.3, 0.3, fireM, x + 0.16, 1.0, 7.484, PI); block(x - 0.2, x + 0.52, 7.24, 7.5); } else bb(x - 0.18, x + 0.18, 0, 0.06, 7.24, 7.48, mat.dark); };
+  hydrant(-H + 2.4);
+  CARS.forEach((c, i) => { const k = i % 3, last = i == CARS.length - 1, ad = i * 2 + (i / 3 | 0);       // 칸마다 세 가지 구성을 번갈아 놓는다
+    if (k == 0) { adBox(c - 7.6, 3.0, ad, 1.5); board(c - 2.4, 1.9, 1.19, T.linemap); bench(c + 2); aed(c + 6); adBox(c + 10, 3.0, ad + 2, 1.5); for (const d of [-10, -6, -1, 4.5, 9]) PLAT.wall.push(c + d); }
+    else if (k == 1) { cabinet(c - 4.9); board(c - 2, 1.6, 1.2, T.map); vending(c + 0.7, T.vend); bins(c + 3.0); adBox(c + 6, 3.0, ad + 2, 1.5); ext(c + 9.3, true); for (const d of [-8, -3, 2, 6, 8]) PLAT.wall.push(c + d); }
+    else { board(c - 8.8, 1.0, 1.25, T.timetable); bench(c - 6); vending(c - 3, T.vend2); adBox(c + 2, 3.0, ad + 2, 1.5); ext(c + 4.9, false); hydrant(c + 6.4); if (last) adBox(c + 9.9, 2.4, ad + 5, 1.2); for (const d of [-8.5, -0.5, 2, 7.5]) PLAT.wall.push(c + d); } });
   // 행선 안내기와 출구 표지
-  [-20, 0, 20].forEach(x => { bb(x - 0.95, x + 0.95, 2.42, 2.98, 0.98, 1.1, mat.black); sign(1.8, 0.5, lit(T.lcd, 1.5), x, 2.7, 1.101, 0); [-0.7, 0.7].forEach(d => tubeY(x + d, 1.04, 2.98, 3.0, 0.015, mat.steelD, 8)); });
-  [[-27.5, 0], [27.5, 1], [-9, 0], [9, 1]].forEach(([x, k]) => { bb(x - 1.12, x + 1.12, 2.44, 2.96, 3.57, 3.63, mat.dark); sign(2.2, 0.5, lit(T.exit[k], 1.15), x, 2.7, 3.631, 0); sign(2.2, 0.5, lit(T.exit[1 - k], 1.15), x, 2.7, 3.569, PI); [-0.9, 0.9].forEach(d => tubeY(x + d, 3.6, 2.96, 3.0, 0.012, mat.steelD, 8)); });
+  { const lcdM = lit(T.lcd, 1.5); CARS.forEach(x => { bb(x - 0.95, x + 0.95, 2.42, 2.98, 0.98, 1.1, mat.black); sign(1.8, 0.5, lcdM, x, 2.7, 1.101, 0); [-0.7, 0.7].forEach(d => tubeY(x + d, 1.04, 2.98, 3.0, 0.015, mat.steelD, 8)); }); }
+  [[-H + 6.5, 0], [H - 6.5, 1], ...CARS.filter(c => Math.abs(c) > 15).map(c => c < 0 ? [c + 11, 0] : [c - 11, 1])].forEach(([x, k]) => { bb(x - 1.12, x + 1.12, 2.44, 2.96, 3.57, 3.63, mat.dark); sign(2.2, 0.5, lit(T.exit[k], 1.15), x, 2.7, 3.631, 0); sign(2.2, 0.5, lit(T.exit[1 - k], 1.15), x, 2.7, 3.569, PI); [-0.9, 0.9].forEach(d => tubeY(x + d, 3.6, 2.96, 3.0, 0.012, mat.steelD, 8)); });
 
   // 양 끝 계단
   for (const s of [-1, 1]) {
-    const X = (v) => s * v;
+    const X = (v) => s * (v + H - 34);
     bb(X(34), X(34.2), 0, 3, -0.1, 2.0, mat.wall); bb(X(34), X(34.2), 0, 3, 6.2, 7.7, mat.wall);
     bb(X(34), X(40), 0, 5.9, 1.8, 2.0, mat.wall); bb(X(34), X(40), 0, 5.9, 6.2, 6.4, mat.wall);
     bb(X(34), X(40), 5.8, 5.9, 2, 6.2, mat.ceil); bb(X(40), X(40.2), 0, 5.9, 1.8, 6.4, mat.wall);
@@ -443,9 +480,9 @@ function build(T, S) {
   }
 
   /* ── 승강장 안전문 ── */
-  bb(-34, 34, 2.05, 2.55, -0.12, 0.12, mat.steel);
-  bb(-34, 34, 2.55, 3.0, -0.07, 0.07, mat.dark);
-  const edges = [-34]; doorXs.forEach(x => edges.push(x - 1, x + 1)); edges.push(34);
+  bb(-H, H, 2.05, 2.55, -0.12, 0.12, mat.steel);
+  bb(-H, H, 2.55, 3.0, -0.07, 0.07, mat.dark);
+  const edges = [-H]; doorXs.forEach(x => edges.push(x - 1, x + 1)); edges.push(H);
   const emM = zoned(new THREE.MeshStandardMaterial({ map: T.emdoor, transparent: true, roughness: 0.5, side: THREE.DoubleSide }));
   for (let i = 0; i < edges.length; i += 2) {
     const a = edges[i], b = edges[i + 1], L = b - a, c = (a + b) / 2;
@@ -453,7 +490,7 @@ function build(T, S) {
     bb(a + 0.1, b - 0.1, 0, 0.28, -0.045, 0.045, mat.steel);
     bb(a + 0.1, b - 0.1, 0.28, 2.05, -0.008, 0.008, mat.glass);
     if (L > 3.2) {                                      // 객차 사이·끝 구간: 광고판
-      bb(c - 1.26, c + 1.26, 0.5, 1.9, -0.03, 0.05, mat.steelD); sign(2.4, 1.2, wide(i + 5), c, 1.2, 0.052, 0);
+      bb(c - 1.26, c + 1.26, 0.5, 1.9, -0.03, 0.05, mat.steelD); sign(2.4, 1.2, wide(i + 5), c, 1.2, 0.052, 0); PLAT.psdAds.push(c);
       bb(c - 1.3, c - 1.26, 0.28, 2.05, -0.04, 0.04, mat.steel); bb(c + 1.26, c + 1.3, 0.28, 2.05, -0.04, 0.04, mat.steel);
     } else {                                            // 문 사이 구간: 비상문(밀고 나가는 손잡이)
       bb(c - 0.03, c + 0.03, 0.28, 2.05, -0.04, 0.04, mat.steel);
@@ -469,7 +506,7 @@ function build(T, S) {
     bb(x - 0.06, x + 0.06, 2.07, 2.1, 0.12, 0.13, mat.lightG);
     bb(x - 1.0, x + 1.0, -0.02, 0.003, -0.1, 0.06, mat.steelD); bb(x - 0.98, x + 0.98, 0.003, 0.0045, 0.035, 0.055, mat.yellow);
     if (i % 4 != 3) sign(2.3, 0.3, strip(i * 2 + 1), x + 2.4, 2.3, 0.122, 0); else sign(1.5, 0.26, strip(i * 2 + 1), x + 2.3, 2.3, 0.122, 0);
-    block(x - 1, x + 1, -0.3, 0.08, { door: true });
+    block(x - 1, x + 1, -0.3, 0.08, { door: true, car: i >> 2 });
   });
   // 문짝 (공용 형상)
   const psdSteel = mergeGeometries([gbox(0, 0.05, 0, 2.05, -0.02, 0.02), gbox(0.95, 1, 0, 2.05, -0.02, 0.02), gbox(0.05, 0.95, 2.0, 2.05, -0.02, 0.02), gbox(0.05, 0.95, 0, 0.3, -0.02, 0.02)]);
@@ -485,14 +522,21 @@ function build(T, S) {
     else { g.add(new THREE.Mesh(trSteel, MT.steel), new THREE.Mesh(trRubber, MT.rubber), new THREE.Mesh(trGlass, MT.glassT)); const st = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), leanM); st.position.set(0.325, 1.32, 0); st.scale.x = s; g.add(st); }
     parent.add(g); return g;
   }
-  doorXs.forEach(x => { for (const s of [-1, 1]) {
-    leaves.push({ g: leaf('psd', x, -0.035, s, dyn), x, s, travel: 0.97, kind: 0 });
-    leaves.push({ g: leaf('tr', x, -0.19, s, dyn), x, s, travel: 0.63, kind: 1 });
-    leaf('tr', x, -3.21, s, statT);                    // 반대편 문(닫힘)
+  // 움직이는 문짝은 같은 부품끼리 한 번에 그린다(문이 많아도 그리는 횟수가 늘지 않는다). 좌우 짝은 뒤집은 형상을 따로 둔다
+  const mirror = g => { const m = g.clone(); m.scale(-1, 1, 1); const idx = m.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i]; idx[i] = idx[i + 2]; idx[i + 2] = t; } return m; };
+  const plane = (w, h, x, y, z) => { const g = new THREE.PlaneGeometry(w, h); g.translate(x, y, z); return g; };
+  const inst = (geo, m) => { const me = new THREE.InstancedMesh(geo, m, doorXs.length); me.frustumCulled = false; me.renderOrder = m.transparent ? 2 : 0; dyn.add(me); return me; };
+  const leafParts = [[-1, 1].map(s => [inst(s > 0 ? psdSteel : mirror(psdSteel), MP.steel), inst(s > 0 ? psdGlass : mirror(psdGlass), MP.glass), inst(s > 0 ? psdTape : mirror(psdTape), MP.yellow), inst(plane(0.9, 0.2, s * 0.5, 1.42, 0.008), bandM)]),
+    [-1, 1].map(s => [inst(s > 0 ? trSteel : mirror(trSteel), MT.steel), inst(s > 0 ? trRubber : mirror(trRubber), MT.rubber), inst(s > 0 ? trGlass : mirror(trGlass), MT.glassT), inst(plane(0.2, 0.2, s * 0.325, 1.32, 0), leanM)])];
+  doorXs.forEach((x, i) => { for (const s of [-1, 1]) {
+    leaves.push({ parts: leafParts[0][s > 0 ? 1 : 0], idx: i, x, z: -0.035, s, travel: 0.97, kind: 0, car: i >> 2, px: x });
+    leaves.push({ parts: leafParts[1][s > 0 ? 1 : 0], idx: i, x, z: -0.19, s, travel: 0.63, kind: 1, car: i >> 2, px: x });
+    leaf('tr', x, -3.21, s, carStat[i >> 2]);          // 반대편 문(닫힘)
   } });
+  leaves.meshes = leafParts.flat(2);
 
   /* ── 전동차 ── */
-  ZONE = 't'; mat = MT; stat = statT;
+  ZONE = 't'; mat = MT; stat = carStat[0];
   function sideWall(c, z1, z2, m, band) {
     const cuts = []; DOORS.forEach(d => cuts.push([c + d - 0.65, c + d + 0.65, 0])); [-4.8, 0, 4.8].forEach(w => cuts.push([c + w - 1.15, c + w + 1.15, 1]));
     cuts.sort((a, b) => a[0] - b[0]); let x = c - 9.75;
@@ -531,9 +575,9 @@ function build(T, S) {
   const hangM = T.wide.map(t => zoned(new THREE.MeshStandardMaterial({ map: t, roughness: 0.5, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.1 })));
   const ceilT = M(0xf2f2ee, 0.5, 0, { emissive: 0x6e6e6c }), tlcdM = lit(T.tlcd, 1.4), noticeM = printed(T.notice, 0.5), emerM = printed(T.emer, 0.45), gTrainM = multiply(T.gTrain);
   CARS.forEach((c, ci) => {
-    const A = c - 9.75, B = c + 9.75;
+    const A = c - 9.75, B = c + 9.75; stat = carStat[ci];
     bb(A, B, -0.12, 0, -3.26, -0.14, mat.tfloor);
-    { const m = new THREE.Mesh(new THREE.PlaneGeometry(19.5, 2.92), gTrainM); m.rotation.x = -PI / 2; m.position.set(c, 0.006, ZC); m.renderOrder = 1; tG.add(m); }
+    { const m = new THREE.Mesh(new THREE.PlaneGeometry(19.5, 2.92), gTrainM); m.rotation.x = -PI / 2; m.position.set(c, 0.006, ZC); m.renderOrder = 1; carG[ci].add(m); }
     bb(A, B, 2.2, 2.62, -3.26, -0.14, MP.steelD); bb(A, B, 2.185, 2.2, -3.16, -0.24, ceilT);
     bb(A + 0.2, B - 0.2, -1.1, -0.12, -3.2, -0.2, MP.black);
     sideWall(c, -0.24, -0.18, mat.twall, null); sideWall(c, -0.18, -0.14, MP.steel, -0.14);
@@ -574,20 +618,21 @@ function build(T, S) {
         if (e > 0) { bb(B, B + 0.5, -0.1, 0.004, ZC - 0.7, ZC + 0.7, mat.steelD); bb(B, B + 0.5, 1.97, 2.03, ZC - 0.7, ZC + 0.7, mat.rubber);
           for (const dz of [-0.7, 0.7]) for (let k = 0; k < 5; k++) bb(B + k * 0.1, B + k * 0.1 + 0.1, 0, 2.0, ZC + dz - (k % 2 ? 0.03 : 0.06), ZC + dz + (k % 2 ? 0.03 : 0.06), mat.rubber); } }
     }
-    { const p = new THREE.PointLight(0xf2f7ff, 5.2, 17, 2); p.position.set(c, 1.5, ZC); tG.add(p); }       // 칸마다 등 하나(나머지 밝기는 찍어 둔 반사광이 맡는다)
   });
-  block(-31, 31, -4, -3.16);
+  block(-H + 3, H - 3, -4, -3.16);
+  // 폐쇄된 칸 쪽 통로를 막는 문(평소에는 숨겨 둔다)
+  sealG = new THREE.Group(); sealG.visible = false; tG.add(sealG);
+  bb(-0.035, 0.035, 0, 1.95, ZC - 0.66, ZC + 0.66, MT.steelD, { parent: sealG }); sign(1.26, 1.9, printed(T.closed, 0.5), 0.037, 0.96, ZC, PI / 2, sealG);
+  for (const dz of [-0.4, 0.4]) bb(-0.05, -0.036, 1.0, 1.12, ZC + dz - 0.1, ZC + dz + 0.1, MP.lightR, { parent: sealG });
   ZONE = 'p'; stat = statS;
 
   /* ── 조명 ── */
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d4ca, 0.2));
-  for (const x of [-25.5, -8.5, 8.5, 25.5]) { const p = new THREE.PointLight(0xfff7ea, 8.5, 30, 2); p.position.set(x, 2.7, 3.4); sG.add(p); }
+  if (!hemi) { hemi = new THREE.HemisphereLight(0xffffff, 0xd9d4ca, 0.2); scene.add(hemi); }
+  for (const l of pLights) sG.add(l); for (const l of tLights) tG.add(l);
 
-  /* ── 정적 메시 병합(역과 열차를 따로) ── */
-  for (const [src, dst] of [[statS, sG], [statT, tG]]) { src.updateMatrixWorld(true); const by = new Map();
-    src.traverse(o => { if (o.isMesh) { const g = o.geometry.clone().applyMatrix4(o.matrixWorld); if (o.matrixWorld.determinant() < 0) { const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i]; idx[i] = idx[i + 2]; idx[i + 2] = t; } }
-      if (!by.has(o.material.uuid)) by.set(o.material.uuid, { m: o.material, gs: [] }); by.get(o.material.uuid).gs.push(g); } });
-    for (const { m, gs } of by.values()) { const me = new THREE.Mesh(gs.length > 1 ? mergeGeometries(gs) : gs[0], m); me.renderOrder = m.transparent ? 2 : 0; me.frustumCulled = false; me.matrixAutoUpdate = false; dst.add(me); } }
+  /* ── 정적 메시 병합(역은 한 덩어리 또는 구간별, 열차는 칸별) ── */
+  mergeStatic(statS, sG, 0);
+  CARS.forEach((c, i) => { mergeStatic(carStat[i], carG[i], 0, c); tG.add(carG[i]); });
   return leaves;
 }
 

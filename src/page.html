@@ -25,6 +25,7 @@
   .btns input{font:inherit;font-size:16px;font-weight:700;padding:13px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.45);color:#fff;min-width:0;text-align:center}
   .btns input::placeholder{color:rgba(255,255,255,.5);font-weight:500}
   .joinrow{display:flex;gap:8px} .joinrow input{flex:1;text-transform:uppercase;letter-spacing:.15em} .joinrow button{padding:13px 18px}
+  .solorow{display:flex;gap:8px} .solorow button{flex:1} .btns select{font:inherit;font-weight:700;font-size:15px;padding:0 10px;border-radius:10px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.45);color:#fff}
   #menuMsg{min-height:22px;margin-top:12px;font-size:14px;color:#ffd27a}
   .keys{margin-top:34px;font-size:13px;opacity:.7;line-height:1.9;text-align:center}
   kbd{background:rgba(255,255,255,.14);border-radius:5px;padding:2px 7px;font-family:inherit;font-weight:700}
@@ -54,7 +55,7 @@
     <input id="nick" maxlength="10" placeholder="닉네임" autocomplete="off">
     <button id="mk">방 만들기</button>
     <div class="joinrow"><input id="code" maxlength="5" placeholder="방 코드" autocomplete="off"><button id="jn">참여</button></div>
-    <button id="start">혼자 하기</button>
+    <div class="solorow"><button id="start">혼자 하기</button><select id="soloCars" title="혼자 할 때의 칸 수"><option value="2">2칸</option><option value="3" selected>3칸</option><option value="4">4칸</option><option value="5">5칸</option><option value="6">6칸</option><option value="7">7칸</option><option value="8">8칸</option></select></div>
   </div>
   <div id="menuMsg"></div>
   <div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>Shift</kbd> 달리기 &nbsp; <kbd>E</kbd> 앉기·손잡이·줍기·구매 &nbsp; <kbd>클릭</kbd> 공격·마시기·휴대폰 보기<br><kbd>1</kbd>~<kbd>5</kbd>·휠 물건 바꾸기 &nbsp; <kbd>H</kbd> 휘파람 &nbsp; <kbd>F</kbd> 문 바로 여닫기 &nbsp; <kbd>G</kbd> 그래픽</div>
@@ -84,7 +85,7 @@ const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
 
 function collide(p, R = 0.27) {
   for (let k = 0; k < 3; k++) for (const b of blocks) {
-    if (b.door && doorT > 0.8) continue;
+    if (b.door && doorT > 0.8 && b.car >= firstOpen) continue;      // 열린 문은 지나간다(폐쇄된 칸의 문은 열리지 않는다)
     const cx = Math.max(b.x1, Math.min(p.x, b.x2)), cz = Math.max(b.z1, Math.min(p.z, b.z2)), dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
     if (d2 >= R * R) continue;
     if (d2 > 1e-9) { const d = Math.sqrt(d2); p.x += dx / d * (R - d); p.z += dz / d * (R - d); }
@@ -101,12 +102,19 @@ function trainMotion() {            // 문이 닫혀 있는 동안 출발 → �
   if (u < ta) { s = 0.5 * a * u * u; trainV = a * u; } else if (u < T - ta) { s = vm * (u - ta / 2); trainV = vm; } else { const r = T - u; s = TRAVEL - 0.5 * a * r * r; trainV = a * r; }
   trainX = s < TRAVEL / 2 ? s : s - TRAVEL;
 }
+const _lm = new THREE.Matrix4();
 function tick(dt) {
   doorT += Math.sign(doorTarget - doorT) * Math.min(Math.abs(doorTarget - doorT), dt / 2.2);
   updateNPCs(dt);
   trainMotion(); const inT = pos.z < -0.1;          // 보는 사람이 탄 쪽을 기준으로 반대쪽을 움직인다
   offT = inT ? 0 : trainX; offS = inT ? -trainX : 0; sG.position.x = offS; tG.position.x = offT; setTrainEnv(Math.abs(trainX) > 60);
-  for (const l of leaves) { const t = l.kind == 0 ? ease(doorT * 1.2) : ease((doorT - 0.15) / 0.85); l.g.position.x = l.x + l.s * t * l.travel + (l.kind ? offT : offS); }
+  if (Math.abs(trainX) > 150) for (let c = 0; c < firstOpen; c++) if (carState[c] == 1) carState[c] = 2;       // 역을 벗어나면 남겨 둔 칸은 더 그리지 않는다
+  for (let c = 0; c < CARS.length; c++) { const cs = carState[c] | 0; carG[c].visible = cs < 2 && Math.abs(CARS[c] + (cs ? carG[c].position.x + offS : offT) - pos.x) < 80; }     // 멀리 있는 칸은 그리지 않는다
+  for (const l of leaves) { const t = l.car < firstOpen ? 0 : l.kind == 0 ? ease(doorT * 1.2) : ease((doorT - 0.15) / 0.85), cs = l.kind ? carState[l.car] | 0 : 0;
+    l.px = l.x + l.s * t * l.travel + (!l.kind ? offS : cs ? carG[l.car].position.x + offS : offT);          // 폐쇄된 칸의 문은 그 칸과 함께 역에 남는다
+    if (cs < 2) _lm.makeTranslation(l.px, 0, l.z); else _lm.makeScale(0, 0, 0); for (const me of l.parts) me.setMatrixAt(l.idx, _lm); }
+  if (leaves.meshes) for (const me of leaves.meshes) me.instanceMatrix.needsUpdate = true;
+  placeLights(pos.x - offS, pos.x - offT);
 }
 function movePlayer(dt, f, s, run) {
     const len = Math.hypot(f, s), wasInside = pos.z < -0.2; let moving = false;
@@ -133,9 +141,10 @@ function frame(now) {
     pos.y = G.eye + groundY(pos.x);
     const shake = pos.z < -0.1 ? trainV / 16 : 0;
     camera.position.set(pos.x, pos.y + (G.seat ? 0 : Math.sin(bob * 2) * 0.018) + (Math.sin(now * 0.031) + Math.sin(now * 0.047)) * 0.0022 * shake, pos.z); camera.rotation.set(pitch + G.punch, yaw, Math.sin(now * 0.0023) * 0.004 * shake);
-    const t = Math.abs(pos.x) > 34.3 ? '계단' : pos.z < -0.1 ? `${Math.max(1, Math.min(3, Math.round((pos.x + 20) / 20) + 1))}호차` : '강남역 승강장';
+    const t = Math.abs(pos.x) > HP + 0.3 ? '계단' : pos.z < -0.1 ? `${carOf(pos.x) + 1}호차 · 운행 ${CARS.length - firstOpen}칸` : '강남역 승강장';
     if (t != locTxt) locEl.textContent = locTxt = t;
-    const st = NET.hold ? '대기실 · 방장이 시작하면 출입문이 열립니다' : phase == 'open' ? `정차 중 · 출입문 ${Math.ceil(phaseT)}초 후 닫힘` : trainV > 0.05 ? `주행 중 · 다음 역까지 ${Math.max(0, Math.ceil(phaseT - 3))}초` : phaseT > 10 ? '출입문 닫힘 · 곧 출발' : '도착 · 곧 출입문 열림';
+    const cl = closing >= 0 ? ` · 도착하면 ${closing + 1}호차 폐쇄` : '';
+    const st = NET.hold ? '대기실 · 방장이 시작하면 출입문이 열립니다' : phase == 'open' ? `정차 중 · 출입문 ${Math.ceil(phaseT)}초 후 닫힘` : trainV > 0.05 ? `주행 중 · 다음 역까지 ${Math.max(0, Math.ceil(phaseT - 3))}초${cl}` : phaseT > 10 ? `출입문 닫힘 · 곧 출발${cl}` : '도착 · 곧 출입문 열림';
     if (st != stTxt) stEl.textContent = stTxt = st;
   } else { camera.position.set(pos.x, pos.y, pos.z); camera.rotation.set(pitch + Math.sin(now / 2600) * 0.008, yaw + Math.sin(now / 4100) * 0.05, 0); }
   drawNPCs(dt, now / 1000);
@@ -157,7 +166,27 @@ canvas.addEventListener('touchmove', e => { if (!playing) return; const t = e.to
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); resizePost(); });
 function enterWorld() { document.getElementById('menu').classList.add('hide'); document.body.classList.add('play'); playing = true; lock(); drawInv(); drawMission(); }
 const nick = () => (document.getElementById('nick').value.trim() || '플레이어').slice(0, 10);
-document.getElementById('start').addEventListener('click', () => { audio(); enterWorld(); });
+document.getElementById('start').addEventListener('click', async () => { audio(); const n = +document.getElementById('soloCars').value || 3;
+  if (n != CARS.length) { const l = document.getElementById('load'); l.textContent = '열차 준비 중…'; l.classList.remove('hide'); await new Promise(r => setTimeout(r, 60)); await remake(n); l.classList.add('hide'); }
+  enterWorld(); });
+// 칸 수를 바꿔 역과 열차를 다시 짓는다. 길이가 달라지므로 승강장·열차·자리·승객 수를 모두 새로 맞춘다
+let SIGNS = null, SURF = null, remaking = null;
+function remake(n) {
+  n = Math.max(2, Math.min(MAXC, n | 0));
+  if (remaking) return remaking.then(() => remake(n));
+  if (n == CARS.length) return Promise.resolve();
+  remaking = (async () => {
+    await sizeNPCs(npcCount(n));                        // 모자란 승객의 몸부터 만들어 둔다(여기까지는 이전 세계가 그대로 돈다)
+    if (G.seat) { G.seat = null; toHost({ t: 'stand' }); } letGo(); G.seatWait = null;
+    clearPickups(); clearWorld(); setCars(n); leaves = build(SIGNS, SURF); makeSpots(); carState.length = 0; reopenCars();
+    trimNPCs(npcCount(n));
+    if (isHost()) { placeNPCs(); refillPickups(true); sendPickups(); } else { for (const q of npcs) { q.state = 'gone'; q.spot = null; q.path = []; } NET.gotSnap = false; }
+    pos.x = Math.max(-HP + 2, Math.min(HP - 2, pos.x)); if (pos.z < 0.4) pos.z = 3.3;
+    captureProbes(); captureProbes();
+    if (!isHost()) toHost({ t: 'pkreq' });              // 다시 짓는 동안 놓친 물건 목록을 방장에게 다시 받는다
+  })().finally(() => { remaking = null; });
+  return remaking;
+}
 document.getElementById('mk').addEventListener('click', () => { audio(); makeRoom(nick()); });
 document.getElementById('jn').addEventListener('click', () => { audio(); joinRoom(document.getElementById('code').value, nick()); });
 document.getElementById('code').addEventListener('keydown', e => { if (e.key == 'Enter') document.getElementById('jn').click(); });
@@ -175,12 +204,13 @@ document.getElementById('code').addEventListener('keydown', e => { if (e.key == 
   try { const s = [...seen].join(''); await Promise.race([Promise.all([400, 500, 700, 900].map(w => document.fonts.load(`${w} 40px "Noto Sans KR"`, s))), new Promise(r => setTimeout(r, 3500))]); } catch (e) {}
   dry = false; loadEl.textContent = '재질 만드는 중…'; await nextFrame();
   const S = makeSurfaces(); loadEl.textContent = '역 짓는 중…'; await nextFrame();
-  leaves = build(makeSigns(), S);
+  SIGNS = makeSigns(); SURF = S; leaves = build(SIGNS, SURF); reopenCars();
   loadEl.textContent = '조명 계산 중…'; await nextFrame();
   captureProbes(); captureProbes();                     // 한 번 더 찍어 반사광까지 반영
-  setupPost(); refillPickups();
-  await spawnNPCs(k => { loadEl.textContent = `승객 준비 중… ${k}/${NPC_N}`; });
-  window.__ready = true; window.__dbg = { pos, set: (x, z, y, p) => { pos.x = x; pos.z = z; yaw = y; pitch = p || 0; }, door: v => { phase = v ? 'open' : 'closed'; phaseT = 999; doorTarget = v; doorT = v; }, play: () => { playing = true; }, hq: v => { hq = v; qAuto = false; }, gstep: sec => { for (let i = 0; i < sec * 20; i++) { tick(0.05); gameUpdate(0.05, 0, false, false); } }, startRound, onDoorsClosed, train: () => ({ trainX, trainV, offS, offT }), bench: () => { const t0 = performance.now(); let hv = 0, lv = 0; for (let i = 0; i < 10; i++) { const P = makePerson(555 + i, NPC_Q, { lod: NPC_LOD }); hv += P.hi.geometry.attributes.position.count; lv += P.lo.geometry.attributes.position.count; } const t1 = performance.now(); for (let i = 0; i < 10; i++) makePerson(555 + i, NPC_Q, { geoOnly: true }); const t2 = performance.now(); return { both: (t1 - t0) / 10, hiOnly: (t2 - t1) / 10, hv: hv / 10, lv: lv / 10 }; }, walk: (sec, run) => { const x0 = pos.x, z0 = pos.z; for (let i = 0; i < sec * 60; i++) { movePlayer(1 / 60, 1, 0, run); gameUpdate(1 / 60, 1, true, run); } return Math.hypot(pos.x - x0, pos.z - z0) / sec; }, probe: (px, py0, py1) => { const rc = new THREE.Raycaster(), out = []; camera.updateMatrixWorld(); let last = ''; for (let y = py0; y < py1; y++) { rc.setFromCamera(new THREE.Vector2(px / innerWidth * 2 - 1, -(y / innerHeight * 2 - 1)), camera); const h = rc.intersectObjects(scene.children.filter(o => o !== camera), true)[0]; const k = h ? h.object.type + (h.object.isSkinnedMesh ? '#' + npcs.findIndex(n => n.P.g === h.object.parent) + ':' + (npcs.find(n => n.P.g === h.object.parent) || {}).state : '') + ' ' + (h.object.material.color ? h.object.material.color.getHexString() : '?') + ' r' + (h.object.material.roughness ?? '') + ' d' + h.distance.toFixed(2) + ' @' + h.point.x.toFixed(1) + ',' + h.point.y.toFixed(2) + ',' + h.point.z.toFixed(2) : 'none'; const kk = k.split(' d')[0]; if (kk != last) { out.push(y + ': ' + k); last = kk; } } return out; }, render: v => { noRender = !v; }, rivals, camera, G, NET, others, makeRoom, joinRoom, startGame, backToLobby, kick, toHost, pickups, seats, attack, interact, whistle, killNPC, setQ: l => { qAuto = false; setQuality(l); }, sim: sec => { for (let i = 0; i < sec * 20; i++) tick(0.05); }, npcs, doorInfo, stats: () => { const c = {}; for (const n of npcs) c[n.state] = (c[n.state] || 0) + 1; return { c, phase, phaseT, bodies: bodies.size, verts: npcs.reduce((a, n) => a + n.P.verts, 0), lo: npcs.reduce((a, n) => a + n.P.lo.geometry.attributes.position.count, 0), calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; } };
+  setupPost();
+  await sizeNPCs(npcCount(CARS.length), (k, n) => { loadEl.textContent = `승객 준비 중… ${k}/${n}`; });
+  placeNPCs(); refillPickups(true);
+  window.__ready = true; window.__dbg = { pos, set: (x, z, y, p) => { pos.x = x; pos.z = z; yaw = y; pitch = p || 0; }, door: v => { phase = v ? 'open' : 'closed'; phaseT = 999; doorTarget = v; doorT = v; }, play: () => { playing = true; }, hq: v => { hq = v; qAuto = false; }, gstep: sec => { for (let i = 0; i < sec * 20; i++) { tick(0.05); gameUpdate(0.05, 0, false, false); } }, startRound, onDoorsClosed, train: () => ({ trainX, trainV, offS, offT }), bench: () => { const t0 = performance.now(); let hv = 0, lv = 0; for (let i = 0; i < 10; i++) { const P = makePerson(555 + i, NPC_Q, { lod: NPC_LOD }); hv += P.hi.geometry.attributes.position.count; lv += P.lo.geometry.attributes.position.count; } const t1 = performance.now(); for (let i = 0; i < 10; i++) makePerson(555 + i, NPC_Q, { geoOnly: true }); const t2 = performance.now(); return { both: (t1 - t0) / 10, hiOnly: (t2 - t1) / 10, hv: hv / 10, lv: lv / 10 }; }, walk: (sec, run) => { const x0 = pos.x, z0 = pos.z; for (let i = 0; i < sec * 60; i++) { movePlayer(1 / 60, 1, 0, run); gameUpdate(1 / 60, 1, true, run); } return Math.hypot(pos.x - x0, pos.z - z0) / sec; }, probe: (px, py0, py1) => { const rc = new THREE.Raycaster(), out = []; camera.updateMatrixWorld(); let last = ''; for (let y = py0; y < py1; y++) { rc.setFromCamera(new THREE.Vector2(px / innerWidth * 2 - 1, -(y / innerHeight * 2 - 1)), camera); const h = rc.intersectObjects(scene.children.filter(o => o !== camera), true)[0]; const k = h ? h.object.type + (h.object.isSkinnedMesh ? '#' + npcs.findIndex(n => n.P.g === h.object.parent) + ':' + (npcs.find(n => n.P.g === h.object.parent) || {}).state : '') + ' ' + (h.object.material.color ? h.object.material.color.getHexString() : '?') + ' r' + (h.object.material.roughness ?? '') + ' d' + h.distance.toFixed(2) + ' @' + h.point.x.toFixed(1) + ',' + h.point.y.toFixed(2) + ',' + h.point.z.toFixed(2) : 'none'; const kk = k.split(' d')[0]; if (kk != last) { out.push(y + ': ' + k); last = kk; } } return out; }, render: v => { noRender = !v; }, remake, cars: () => ({ n: CARS.length, firstOpen, closing, HP, carState: carState.slice(), gameRound, phase, phaseT, trainX, blocks: blocks.length, lights: pLights.concat(tLights).map(l => [+l.position.x.toFixed(1), l.intensity]) }), setPhaseT: v => { phaseT = v; }, PLAT, carG, leaves: () => leaves, resetTrain, setFirstOpen, straps, stands, doorInfo: () => doorInfo, pickMission, memInfo: () => ({ geo: renderer.info.memory.geometries, tex: renderer.info.memory.textures, prog: renderer.info.programs.length }), rivals, camera, G, NET, others, makeRoom, joinRoom, startGame, backToLobby, kick, toHost, pickups, seats, attack, interact, whistle, killNPC, setQ: l => { qAuto = false; setQuality(l); }, sim: sec => { for (let i = 0; i < sec * 20; i++) tick(0.05); }, npcs, doorInfo, stats: () => { const c = {}; for (const n of npcs) c[n.state] = (c[n.state] || 0) + 1; return { c, phase, phaseT, bodies: bodies.size, verts: npcs.reduce((a, n) => a + n.P.verts, 0), lo: npcs.reduce((a, n) => a + n.P.lo.geometry.attributes.position.count, 0), calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; } };
   document.getElementById('load').classList.add('hide');
   requestAnimationFrame(frame);
 })();

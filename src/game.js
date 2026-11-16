@@ -4,7 +4,7 @@ const G = { alive: true, boarded: false, round: 0, mission: null, done: false, k
   ghost: false, punch: 0, swing: null, sip: null, boostT: 0, bought: -1, strap: null, phoneLook: false, phoneK: 0, fireT: 9, dryT: 9, equipT: 1, cylA: 0, lastPhase: 'closed' };
 const ui = (() => {
   const st = document.createElement('style');
-  st.textContent = `#mis,#inv,#pr,#toast{position:fixed;pointer-events:none;opacity:0;transition:opacity .4s;text-shadow:0 1px 5px #000}
+  st.textContent = `#mis,#inv,#pr,#toast,#warn{position:fixed;pointer-events:none;opacity:0;transition:opacity .4s;text-shadow:0 1px 5px #000}
   body.play #mis,body.play #inv{opacity:1}
   #mis{right:16px;top:14px;max-width:340px;background:rgba(0,0,0,.45);padding:10px 14px;border-radius:10px;font-size:14px;line-height:1.55}
   #mis b{font-size:12px;color:#9fd8b7;font-weight:700;display:block} #mis i{font-style:normal;color:#ffd27a} #mis .ok{color:#7fe0a5} #mis .bad{color:#ff8f86}
@@ -13,12 +13,13 @@ const ui = (() => {
   #inv span{background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.18);padding:6px 12px;border-radius:8px;white-space:nowrap} #inv span.on{background:rgba(0,168,77,.75);border-color:#7fe0a5} #inv span.no{opacity:.4}
   #pr{left:50%;top:58%;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:7px 14px;border-radius:8px;font-size:14px;font-weight:700}
   #toast{left:50%;top:22%;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:9px 18px;border-radius:10px;font-size:16px;font-weight:700}
+  #warn{left:50%;top:12%;transform:translateX(-50%);background:rgba(190,32,24,.88);padding:9px 18px;border-radius:10px;font-size:16px;font-weight:900;white-space:nowrap;transition:opacity .2s}
   #glow{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;box-shadow:inset 0 0 140px 40px rgba(255,60,40,.75);display:grid;place-items:end center;padding-bottom:110px;font-weight:900;font-size:18px;color:#ffd0c8;text-shadow:0 1px 6px #000}
   #over{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(20,4,4,.82);text-align:center}
   #over h2{font-size:48px;margin:0;font-weight:900} #over p{margin:0;opacity:.85} #over button{background:#00a84d;margin-top:10px}`;
   document.head.appendChild(st);
   const mk = id => { const d = document.createElement('div'); d.id = id; document.body.appendChild(d); return d; };
-  const o = { mis: mk('mis'), inv: mk('inv'), pr: mk('pr'), toast: mk('toast'), glow: mk('glow'), over: mk('over') };
+  const o = { mis: mk('mis'), inv: mk('inv'), pr: mk('pr'), toast: mk('toast'), warn: mk('warn'), glow: mk('glow'), over: mk('over') };
   o.over.innerHTML = '<h2>탈락</h2><p id="why"></p><button id="again">다시 시작</button>';
   return o;
 })();
@@ -37,6 +38,10 @@ function sShot(vol = 1) { const a = audio(); if (!a) return; const s = a.createB
 function sWhoosh() { const a = audio(); if (!a) return; const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), t = a.currentTime; s.buffer = noiseBuf(a, 0.3, 0); f.type = 'bandpass'; f.Q.value = 1.4; f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(2600, t + 0.16); f.frequency.exponentialRampToValueAtTime(700, t + 0.3);
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.28, t + 0.12); g.gain.linearRampToValueAtTime(0, t + 0.3); s.connect(f).connect(g).connect(a.destination); s.start(); }
 function sBlip(f = 880, len = 0.09, vol = 0.1, at = 0) { const a = audio(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), t = a.currentTime + at; o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(vol, t); g.gain.linearRampToValueAtTime(0, t + len); o.connect(g).connect(a.destination); o.start(t); o.stop(t + len + 0.01); }
+function sSlam() { const a = audio(); if (!a) return; const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), t = a.currentTime; s.buffer = noiseBuf(a, 0.5, 5); f.type = 'lowpass'; f.frequency.value = 420; g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.01, t + 0.45); s.connect(f).connect(g).connect(a.destination); s.start(); sBlip(70, 0.3, 0.3); }
+// 안내방송: 한국어 음성이 있는 기기에서는 말로도 읽어 준다
+let koVoice = null; try { const pickV = () => { koVoice = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('ko')) || null; }; pickV(); speechSynthesis.addEventListener('voiceschanged', pickV); } catch (e) {}
+function say(text) { try { if (!koVoice || !playing || noRender) return; const u = new SpeechSynthesisUtterance(text); u.voice = koVoice; u.lang = 'ko-KR'; u.rate = 1.03; u.volume = 0.75; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {} }
 function sChime() { sBlip(1175, 0.35, 0.09); sBlip(880, 0.5, 0.09, 0.3); }
 function setRumble(v) { const a = AC; if (!a) return; if (!rumble) { const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(); s.buffer = noiseBuf(a, 2, 0); s.loop = true; f.type = 'lowpass'; f.frequency.value = 160; g.gain.value = 0; s.connect(f).connect(g).connect(a.destination); s.start(); rumble = { g, f }; }
   rumble.g.gain.value += (v - rumble.g.gain.value) * 0.08; rumble.f.frequency.value = 110 + v * 900; }
@@ -86,7 +91,7 @@ function addFx(o, life, upd) { scene.add(o); fx.push({ o, t: 0, life, upd }); }
 const tracerM = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 3, 1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
 function rayLimit(o, d) {            // 총알이 벽·바닥·천장에 닿는 거리(열린 문은 통과)
   let t = 45, inT = o.z < -0.1; const walls = (inT2, tMin) => { const zs = inT2 ? [-3.16, -0.24] : [0.0, 7.5], yTop = inT2 ? 2.19 : 3; let best = 45, crossed = false;
-    for (const z of zs) { const tt = (z - o.z) / d.z; if (tt > tMin + 1e-4 && tt < best) { const x = o.x + d.x * tt, y = o.y + d.y * tt, door = (z == -0.24 || z == 0.0) && doorT > 0.8 && y < 1.9 && doorXs.some(q => Math.abs(q - x) < 0.6); if (door) crossed = tt; else best = tt; } }
+    for (const z of zs) { const tt = (z - o.z) / d.z; if (tt > tMin + 1e-4 && tt < best) { const x = o.x + d.x * tt, y = o.y + d.y * tt, door = (z == -0.24 || z == 0.0) && doorT > 0.8 && y < 1.9 && doorXs.some((q, i) => (i >> 2) >= firstOpen && Math.abs(q - x) < 0.6); if (door) crossed = tt; else best = tt; } }
     for (const y of [0, yTop]) { const tt = (y - o.y) / d.y; if (tt > tMin + 1e-4 && tt < best) best = tt; }
     return [best, crossed]; };
   let [b, cr] = walls(inT, 0); if (cr !== false && cr < b) { const [b2] = walls(!inT, cr + 0.06); b = b2; } return Math.min(t, b);
@@ -110,12 +115,12 @@ function trainSpot(c) {
 }
 function platformSpot() {
   const k = Math.random();
-  if (k < 0.2) return { x: pick([-18, 14]) + rnd(-0.8, 0.8), y: 0.456, z: rnd(7.03, 7.34) };                 // 의자 위
-  if (k < 0.3) return { x: pick([3.22, 3.7]), y: 0.936, z: rnd(7.16, 7.36) };                                // 분리수거함 위
-  if (k < 0.55) return { x: pick([-30, -26, -21, -15.5, -11, -8, -3, 2, 6, 8, 11.5, 19.5, 22, 27.5, 31]) + rnd(-0.3, 0.3), y: 0.012, z: rnd(7.2, 7.38) };   // 벽 아래
-  if (k < 0.75) { const cx = -28 + 8 * ((Math.random() * 8) | 0), s = pick([-1, 1]); return { x: cx + s * rnd(0.45, 0.6), y: 0.012, z: rnd(4.4, 4.9) }; }   // 기둥 옆
-  if (k < 0.9) return { x: pick([-10, 10, -31.5, 31.5]) + rnd(-1, 1), y: 0.012, z: rnd(0.12, 0.3) };          // 안전문 광고판 아래
-  const i = (Math.random() * 12) | 0, s = pick([-1, 1]); return { x: s * (34.3 + i * 0.3 + 0.16), y: (i + 1) * 0.17 + 0.008, z: rnd(2.3, 5.9) };   // 계단
+  if (k < 0.2 && PLAT.benches.length) return { x: pick(PLAT.benches) + rnd(-0.8, 0.8), y: 0.456, z: rnd(7.03, 7.34) };                 // 의자 위
+  if (k < 0.3 && PLAT.bins.length) return { x: pick(PLAT.bins), y: 0.936, z: rnd(7.16, 7.36) };                                         // 분리수거함 위
+  if (k < 0.55) return { x: pick(PLAT.wall) + rnd(-0.3, 0.3), y: 0.012, z: rnd(7.2, 7.38) };                                           // 벽 아래
+  if (k < 0.75) { const cx = pick(PLAT.pillars), s = pick([-1, 1]); return { x: cx + s * rnd(0.45, 0.6), y: 0.012, z: rnd(4.4, 4.9) }; }   // 기둥 옆
+  if (k < 0.9) return { x: pick(PLAT.psdAds) + rnd(-1, 1), y: 0.012, z: rnd(0.12, 0.3) };                                              // 안전문 광고판 아래
+  const i = (Math.random() * 12) | 0, s = pick([-1, 1]); return { x: s * (HP + 0.3 + i * 0.3 + 0.16), y: (i + 1) * 0.17 + 0.008, z: rnd(2.3, 5.9) };   // 계단
 }
 function spawnPickup(frame, c) {
   const sp = frame == 't' ? trainSpot(c) : platformSpot(); if (pickups.some(p => p.frame == frame && Math.hypot(p.x - sp.x, p.z - sp.z) < 0.5 && Math.abs(p.y - sp.y) < 0.4)) return false;
@@ -135,10 +140,12 @@ function onGot(type) { sBlip(1100, 0.06);
   if (G.mission && G.mission.id == 8 && !G.done) { G.prog++; if (G.prog >= 2) complete(); } drawInv(); }
 function removePickup(p) { pickups.splice(pickups.indexOf(p), 1); scene.remove(p.g); if (p.seat) p.seat.item = null; }
 let pickT = 0;
-function refillPickups() {
-  if (!isHost()) return; const before = pickups.length;
-  for (let c = 0; c < 3; c++) { let n = pickups.filter(p => p.frame == 't' && p.car == c).length; for (let k = 0; n < 6 && k < 14; k++) if (spawnPickup('t', c)) n++; }
-  let n = pickups.filter(p => p.frame == 's').length; for (let k = 0; n < 12 && k < 30; k++) if (spawnPickup('s', -1)) n++;
+function clearPickups() { for (const q of pickups.slice()) removePickup(q); }
+function refillPickups(full) {       // 방장. full: 새 판을 시작할 때 열차 곳곳에 뿌린다. 그 뒤로 열차 안에서는 마지막 칸만 남았을 때에만 다시 생긴다
+  if (!isHost()) return; const before = pickups.length, N = CARS.length, inCar = c => pickups.filter(q => q.frame == 't' && q.car == c).length;
+  if (full) for (let c = firstOpen; c < N; c++) { let n = inCar(c); for (let k = 0; n < 6 && k < 14; k++) if (spawnPickup('t', c)) n++; }
+  else if (firstOpen >= N - 1 && inCar(N - 1) < 6) for (let k = 0; k < 14; k++) if (spawnPickup('t', N - 1)) break;      // 마지막 칸: 주기적으로 하나씩 다시 생긴다
+  if (full || Math.abs(trainX) > 150) { let n = pickups.filter(q => q.frame == 's').length; for (let k = 0; n < 4 * N && k < 12 * N; k++) if (spawnPickup('s', -1)) n++; }   // 승강장은 열차가 터널에 있을 때 채운다(역마다 새로 놓인 것처럼)
   if (pickups.length != before) sendPickups();
 }
 
@@ -148,11 +155,13 @@ const COND = [['마스크를 쓴', n => n.P.tags.mask], ['안경을 쓴', n => n
 const MISSION = { 1: ['5초 동안 뛰기', 5, '초'], 2: ['호차 3번 옮기기', 3, '번'], 3: ['서로 다른 의자 3개에 앉기', 3, '개'], 4: ['뒤로 3초 걷기', 3, '초'], 5: ['다음 정차역에서 내려 자판기에서 음료수 사오기'], 6: ['휘파람(H) 3번 불기', 3, '번'], 7: ['아무 승객이나 처치'], 8: ['수집 2번 하기', 2, '번'], 9: [''], 10: [''] };
 const alive = n => n.state != 'dead' && n.state != 'gone';
 function pickMission() {             // 지금 수행할 수 있는 미션 가운데 하나를 고른다
-  const armed = G.knives > 0 || G.bullets > 0, ok = [1, 2, 3, 4, 5, 6, 9]; if (armed) ok.push(7); if (pickups.filter(p => p.frame == 't').length >= 2) ok.push(8);
+  const armed = G.knives > 0 || G.bullets > 0, ok = [1, 3, 4, 5, 6], N = CARS.length, safe = firstOpen + (firstOpen < N - 1 ? 1 : 0), cur = pos.z < -0.1 ? carOf(pos.x) : -1;      // safe: 이번 라운드가 끝나도 남는 첫 칸
+  const dest = []; for (let c = safe; c < N; c++) if (c != cur) dest.push(c);
+  if (N - safe >= 2) ok.push(2); if (dest.length) ok.push(9); if (armed) ok.push(7); if (pickups.filter(p => p.frame == 't' && p.car >= safe).length >= 2) ok.push(8);
   const conds = COND.filter(c => npcs.filter(n => alive(n) && n.z < -0.1 && c[1](n)).length >= 2); if (armed && conds.length) ok.push(10);
   let id; do { id = pick(ok); } while (id == G.lastId && ok.length > 1);
   const m = { id, name: MISSION[id][0], goal: MISSION[id][1], unit: MISSION[id][2] };
-  if (id == 9) { const cur = clamp(Math.round((pos.x + 20) / 20), 0, 2); do { m.car = (Math.random() * 3) | 0; } while (m.car == cur); m.name = `${m.car + 1}호차로 이동`; }
+  if (id == 9) { m.car = pick(dest); m.name = `${m.car + 1}호차로 이동`; }
   if (id == 10) { m.cond = pick(conds); m.name = `${m.cond[0]} 승객 처치`; }
   return m;
 }
@@ -166,10 +175,28 @@ function onDoorsClosed() {           // 문이 닫히는 순간이 라운드의 
     }
   if (inside) { G.boarded = true; startRound(); }
 }
+/* ───────────── 칸 폐쇄 ───────────── */
+function reopenCars() {              // 모든 칸을 다시 잇는다(새 판)
+  CARS.forEach((c, i) => { const g = carG[i]; if (carState[i]) { g.removeFromParent(); tG.add(g); } g.visible = true; g.position.x = 0; carState[i] = 0; });
+  carState.length = CARS.length; firstOpen = 0; closing = -1; gameRound = 0; if (sealG) sealG.visible = false;
+  for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].seal) blocks.splice(i, 1);
+}
+function setFirstOpen(k, instant) {  // k번째 칸(0부터)보다 뒤쪽 칸을 닫는다. 방장과 참가자가 똑같이 실행한다
+  if (k < firstOpen) reopenCars(); if (k == firstOpen) return; if (Math.abs(trainX) > 1) instant = true;      // 달리는 중에 닫히면(건너뛰기) 남겨 둘 역이 없다
+  for (let c = firstOpen; c < k; c++) { const g = carG[c]; carState[c] = instant ? 2 : 1; g.removeFromParent(); sG.add(g); g.position.x = offT - offS; g.visible = !instant; }   // 닫힌 칸은 떼어 내 역에 남긴다
+  firstOpen = k; const xb = CARS[k] - 9.71;
+  for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].seal) blocks.splice(i, 1);
+  blocks.push({ x1: xb - 0.9, x2: xb + 0.02, z1: -3.3, z2: -0.2, seal: true }); sealG.position.x = xb; sealG.visible = true;
+  if (G.alive && !G.ghost && pos.z < -0.1 && pos.x < xb - 0.14) eliminate('폐쇄된 칸에 남아 있었습니다.');
+  else if (!instant && playing) { sSlam(); toast(k >= CARS.length - 1 ? `${k}호차 폐쇄 · 마지막 칸만 남았습니다` : `${k}호차가 폐쇄됐습니다`, 3.5); }
+}
+function resetTrain() {              // 방장: 새 판을 위해 열차와 승객, 물건을 처음 상태로 돌린다
+  reopenCars(); placeNPCs(); clearPickups(); refillPickups(true); sendPickups();
+}
 function eliminate(why, tell = true) { if (!G.alive) return; if (G.seat) standUp(); letGo(); G.alive = false; G.swing = null; G.sip = null; if (tell) toHost({ t: 'out' }); drawInv(); document.getElementById('why').textContent = why; document.getElementById('again').textContent = NET.solo ? '다시 시작' : '관전하기'; ui.over.style.display = 'flex'; try { document.exitPointerLock(); } catch (e) {} }
 function resetGame() { if (G.seat) { G.seat.occ = null; toHost({ t: 'stand' }); } Object.assign(G, { ghost: false, alive: true, boarded: false, round: 0, mission: null, done: false, knives: 1, bullets: 1, drink: false, slot: 0, seat: null, seatWait: null, glowT: 0, car: -1, prog: 0, lastId: 0, swing: null, sip: null, boostT: 0, bought: -1, phoneLook: false }); letGo();
   pos.x = 2.4; pos.z = 3.3; yaw = 0; pitch = -0.02; ui.over.style.display = 'none'; drawInv(); drawMission(); }
-document.getElementById('again').addEventListener('click', () => { if (NET.solo) resetGame(); else { ui.over.style.display = 'none'; G.ghost = true; } lock(); });
+document.getElementById('again').addEventListener('click', () => { if (NET.solo) { resetGame(); resetTrain(); phase = 'closed'; phaseT = 6; doorTarget = 0; approached = true; } else { ui.over.style.display = 'none'; G.ghost = true; } lock(); });
 let misTxt = '';
 function drawMission() {
   let h;
@@ -192,14 +219,14 @@ function killNPCHost(n) {
   for (const d of doorInfo) { for (const l of d.lines) { const i = l.indexOf(n); if (i >= 0) l.splice(i, 1); } const j = d.alight.indexOf(n); if (j >= 0) d.alight.splice(j, 1); }
   n.state = 'dead'; n.deadT = 0; n.path = []; n.phone = false; n.moving = false; n.onArrive = null; n.after = null;
 }
-const zoneOf = (x, z) => (z < -0.1 ? 0 : 10) + clamp(Math.round((x + 20) / 20), 0, 2);      // 소리가 들리는 범위를 따지는 구역(칸 단위)
+const zoneOf = (x, z) => (z < -0.1 ? 0 : 100) + carOf(x);      // 소리가 들리는 범위를 따지는 구역(칸 단위)
 function netEvent(m) {
   const o = others.get(m.from), mz = zoneOf(pos.x, pos.z);
   if (m.k == 'dead') { if (m.id == NET.id) eliminate('다른 플레이어에게 당했습니다.', false); return; }
   if (m.k == 'swing') { if (o) { o.aimT = 0.42; o.aimItem = 'knife'; } return; }
   if (m.k == 'whistle') { if (zoneOf(m.x, m.z) == mz) sWhistle(clamp(1.2 - Math.hypot(m.x - pos.x, m.z - pos.z) / 16, 0.25, 1)); return; }     // 같은 칸에서만 들린다
   if (m.k == 'shot') { if (o) { o.aimT = 0.5; o.aimItem = 'gun'; }
-    const sz = zoneOf(m.o[0], m.o[2]), same = (sz >= 10) == (mz >= 10), near = Math.abs(sz % 10 - mz % 10) <= 1 && (same || doorT > 0.5);      // 인접한 칸까지 들린다
+    const sz = zoneOf(m.o[0], m.o[2]), same = (sz >= 100) == (mz >= 100), near = Math.abs(sz % 100 - mz % 100) <= 1 && (same || doorT > 0.5);      // 인접한 칸까지 들린다
     if (near) sShot(clamp(1.1 - Math.hypot(m.o[0] - pos.x, m.o[2] - pos.z) / 30, 0.2, 1) * (same ? 1 : 0.6));
     const off = m.o[2] < -0.1 ? offT : offS; shotFx(new THREE.Vector3(m.o[0] + off, m.o[1], m.o[2]), new THREE.Vector3(m.e[0] + off, m.e[1], m.e[2]), m.hit, { x: 0, z: 0 }); }
 }
@@ -212,8 +239,8 @@ function shotFx(m0, end, hit, d) {    // 탄도, 착탄 불꽃, 총구 연기
 const pvp = () => NET.started && !NET.over && !NET.solo;
 const rivals = () => pvp() ? [...others.values()].filter(o => o.alive && o.state != 'dead' && o.P) : [];
 function lineOfFire(ox, oz, tx, tz) {            // 벽과 유리는 막고, 열린 문과 통로만 지나간다
-  if ((oz > -0.1) != (tz > -0.1)) { const x = ox + (tx - ox) * (-0.1 - oz) / (tz - oz); if (doorT < 0.8 || !doorXs.some(d => Math.abs(d - x) < 0.62)) return false; }
-  if (oz < -0.1 && tz < -0.1) for (const bx of [-10, 10]) if ((ox - bx) * (tx - bx) < 0) { const z = oz + (tz - oz) * (bx - ox) / (tx - ox); if (Math.abs(z - ZC) > 0.6) return false; }
+  if ((oz > -0.1) != (tz > -0.1)) { const x = ox + (tx - ox) * (-0.1 - oz) / (tz - oz); if (doorT < 0.8 || !doorXs.some((d, i) => (i >> 2) >= firstOpen && Math.abs(d - x) < 0.62)) return false; }
+  if (oz < -0.1 && tz < -0.1) for (let i = 1; i < CARS.length; i++) { const bx = CARS[i] - 10; if ((ox - bx) * (tx - bx) < 0) { const z = oz + (tz - oz) * (bx - ox) / (tx - ox); if (Math.abs(z - ZC) > 0.6 || i <= firstOpen) return false; } }
   return true;
 }
 function knifeHit() {
@@ -253,7 +280,7 @@ function findLook() {                // 지금 상호작용할 수 있는 대상
   if (pos.z < -0.2 && pitch > 0.12) { let br = null, bd = 0.75;      // 위를 보면 가까운 손잡이를 잡을 수 있다
     for (const sp of seats) { const s = sp.yaw == 0 ? 1 : -1, rz = sp.z + s * 0.42, d = Math.hypot(sp.x - pos.x, rz - pos.z); if (d < bd) { bd = d; br = { x: sp.x, z: rz, s }; } }
     if (br) { const sz = br.z + br.s * 0.14, busy = npcs.some(n => n.state == 'strap' && Math.abs(n.z - sz) < 0.15 && Math.abs(n.x - br.x) < 0.4) || [...others.values()].some(o => o.pose == 2 && Math.abs(o.z - sz) < 0.15 && Math.abs(o.x - br.x) < 0.2); return busy ? { kind: 'none', text: '다른 승객이 잡고 있다' } : { kind: 'strap', r: br, text: 'E 손잡이 잡기' }; } }
-  if (pos.z > 5.3) for (const vx of [0.7, 17]) if (Math.abs(pos.x - vx) < 0.9) return G.bought == G.round ? { kind: 'none', text: '이번 라운드에는 이미 샀다' } : G.drink ? { kind: 'none', text: '음료수를 이미 들고 있다' } : { kind: 'vend', text: 'E 음료수 구매' };     // 라운드마다 1개
+  if (pos.z > 5.3) for (const vx of PLAT.vend) if (Math.abs(pos.x - vx) < 0.9) return G.bought == G.round ? { kind: 'none', text: '이번 라운드에는 이미 샀다' } : G.drink ? { kind: 'none', text: '음료수를 이미 들고 있다' } : { kind: 'vend', text: 'E 음료수 구매' };     // 라운드마다 1개
   if (pos.z < -0.2) { let bs = null, bd = 1.25; for (const sp of seats) { const dx = sp.x - pos.x, dz = sp.z - pos.z, d = Math.hypot(dx, dz); if (d < bd && (dx * fx2 + dz * fz) / (d || 1) > 0.5) { bd = d; bs = sp; } }
     if (bs && bs !== G.seat) return { kind: 'sit', sp: bs, text: seatTaken(bs) ? 'E 앉기 (자리 양보 받기)' : 'E 앉기' }; }
   return null;
@@ -315,16 +342,23 @@ function animateHands(dt, moving) {
 }
 
 let prTxt = '';
+let annClosing = -1, annLate = true, annT = 0, warnTxt = '';
 function gameUpdate(dt, f, moving, run) {
   G.cool -= dt; G.wCool -= dt; animateHands(G.freeze ? 0 : dt, moving);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) ui.toast.style.opacity = 0; }
   if (G.glowT > 0) { G.glowT -= dt; ui.glow.style.opacity = 1; ui.glow.textContent = `위치 노출 중 · ${Math.max(0, G.glowT).toFixed(1)}초`; } else ui.glow.style.opacity = 0;
   if (G.seatWait) { G.seatWait.t += dt; if (G.seatWait.t > 4) G.seatWait = null; }
   if (G.boostT > 0) { const c = Math.ceil(G.boostT); G.boostT -= dt; if (Math.ceil(G.boostT) != c) drawInv(); if (G.boostT <= 0) { G.boostT = 0; toast('질주 효과가 끝났다', 1.4); drawInv(); } }
-  pickT -= dt; if (pickT <= 0) { pickT = 25; refillPickups(); }
-  for (const p of pickups) p.g.position.x = p.x + (p.frame == 't' ? offT : offS);
+  pickT -= dt; if (pickT <= 0) { pickT = 20; refillPickups(); }
+  // 폐쇄 안내방송과 경고
+  if (closing != annClosing) { annClosing = closing; annLate = closing < 0; annT = closing >= 0 ? 4 : 0; }
+  if (annT > 0) { annT -= dt; if (annT <= 0 && closing >= 0) { sChime(); toast(`안내방송 · 다음 역에서 ${closing + 1}호차가 폐쇄됩니다`, 5); say(`안내 말씀 드립니다. 다음 역에서 ${closing + 1}호차가 폐쇄됩니다. ${closing + 1}호차에 계신 승객께서는 다른 칸으로 이동해 주시기 바랍니다.`); } }
+  if (!annLate && closing >= 0 && phase == 'closed' && phaseT < 21) { annLate = true; sChime(); say(`잠시 후 ${closing + 1}호차가 폐쇄됩니다.`); }
+  { const danger = G.alive && !G.ghost && closing >= 0 && pos.z < -0.1 && pos.x < CARS[closing + 1] - 9.85, t = danger ? `이 칸은 도착하면 폐쇄됩니다 · ${closing + 2}호차 쪽으로 이동 (${Math.max(0, Math.ceil(phaseT - 3))}초)` : '';
+    if (t != warnTxt) { ui.warn.textContent = warnTxt = t; ui.warn.style.opacity = t ? 1 : 0; } }
+  for (const p of pickups) { const x = p.x + (p.frame == 't' ? offT : offS); p.g.position.x = x; p.g.visible = Math.abs(x - pos.x) < 30; }      // 작은 물건은 가까울 때만 그린다
   if (phase != G.lastPhase) { G.lastPhase = phase; sChime(); }
-  const inTrain = pos.z < -0.2, car = inTrain ? clamp(Math.round((pos.x + 20) / 20), 0, 2) : -1, m = G.mission;
+  const inTrain = pos.z < -0.2, car = inTrain ? carOf(pos.x) : -1, m = G.mission;
   setRumble(inTrain ? trainV / 16 * 0.16 : Math.abs(trainX) < 60 ? trainV / 16 * 0.07 : 0);
   if (m && !G.done && G.alive) {
     if (m.id == 1 && run && moving) G.prog += dt;
