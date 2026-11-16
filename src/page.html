@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>강남역 승강장</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif;color:#fff}
+  canvas#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at center,rgba(8,10,14,.35) 0%,rgba(8,10,14,.78) 100%);transition:opacity .5s}
+  #menu.hide{opacity:0;pointer-events:none}
+  .line{display:flex;align-items:center;gap:10px;font-weight:500;letter-spacing:.08em;font-size:15px;opacity:.9}
+  .badge{width:26px;height:26px;border-radius:50%;background:#00a84d;display:grid;place-items:center;font-weight:900;font-size:14px}
+  h1{font-size:clamp(40px,7vw,76px);font-weight:900;margin:14px 0 6px;letter-spacing:.04em;text-shadow:0 4px 30px rgba(0,0,0,.6)}
+  .en{font-size:15px;letter-spacing:.35em;opacity:.7;margin-bottom:38px}
+  .btns{display:flex;flex-direction:column;gap:12px;width:min(300px,80vw)}
+  button{font:inherit;font-weight:700;font-size:18px;padding:15px 20px;border-radius:10px;border:0;cursor:pointer;color:#fff}
+  #start{background:#00a84d;box-shadow:0 8px 30px rgba(0,168,77,.35)}
+  #start:hover{background:#0cbb5b}
+  #join{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:rgba(255,255,255,.55);cursor:not-allowed}
+  #join small{font-weight:500;font-size:12px;margin-left:6px}
+  .keys{margin-top:34px;font-size:13px;opacity:.7;line-height:1.9;text-align:center}
+  kbd{background:rgba(255,255,255,.14);border-radius:5px;padding:2px 7px;font-family:inherit;font-weight:700}
+  #loc{position:fixed;left:16px;top:14px;font-weight:700;font-size:15px;opacity:0;transition:opacity .5s;text-shadow:0 1px 6px #000;pointer-events:none;
+    background:rgba(0,0,0,.35);padding:6px 12px;border-radius:8px}
+  #st{position:fixed;left:16px;top:52px;font-size:12.5px;opacity:0;transition:opacity .5s;text-shadow:0 1px 5px #000;pointer-events:none;background:rgba(0,0,0,.35);padding:5px 12px;border-radius:8px}
+  body.play #st{opacity:1}
+  #dot{position:fixed;left:50%;top:50%;width:5px;height:5px;margin:-2.5px;border-radius:50%;background:rgba(255,255,255,.75);opacity:0;pointer-events:none}
+  body.play #loc,body.play #dot{opacity:1}
+  #load{position:fixed;inset:0;display:grid;place-items:center;background:#0b0d10;font-size:15px;letter-spacing:.1em;transition:opacity .6s}
+  #load.hide{opacity:0;pointer-events:none}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="loc">승강장</div>
+<div id="st"></div>
+<div id="dot"></div>
+<div id="menu">
+  <div class="line"><span class="badge">2</span>2호선 · 교대 방면</div>
+  <h1>강남역</h1>
+  <div class="en">GANGNAM STATION</div>
+  <div class="btns">
+    <button id="start">둘러보기</button>
+    <button id="join" disabled>방 참여<small>준비 중</small></button>
+  </div>
+  <div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>Shift</kbd> 달리기 &nbsp; <kbd>E</kbd> 앉기·손잡이·줍기·구매 &nbsp; <kbd>클릭</kbd> 공격·마시기·휴대폰 보기<br><kbd>1</kbd>~<kbd>5</kbd>·휠 물건 바꾸기 &nbsp; <kbd>H</kbd> 휘파람 &nbsp; <kbd>F</kbd> 문 바로 여닫기 &nbsp; <kbd>G</kbd> 그래픽</div>
+</div>
+<div id="load">승강장 준비 중…</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+/*__PEOPLE__*/
+/*__ENV__*/
+
+/* ───────────── 진행 ───────────── */
+const pos = new THREE.Vector3(2.4, 1.48, 3.3); let yaw = 0, pitch = -0.02;
+let playing = false, doorTarget = 0, doorT = 0, leaves = [];
+const keys = {}; const R = 0.27;
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+
+function collide(p, R = 0.27) {
+  for (let k = 0; k < 3; k++) for (const b of blocks) {
+    if (b.door && doorT > 0.8) continue;
+    const cx = Math.max(b.x1, Math.min(p.x, b.x2)), cz = Math.max(b.z1, Math.min(p.z, b.z2)), dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
+    if (d2 >= R * R) continue;
+    if (d2 > 1e-9) { const d = Math.sqrt(d2); p.x += dx / d * (R - d); p.z += dz / d * (R - d); }
+    else { const pen = [p.x - b.x1, b.x2 - p.x, p.z - b.z1, b.z2 - p.z], m = Math.min(...pen);
+      if (m == pen[0]) p.x = b.x1 - R; else if (m == pen[1]) p.x = b.x2 + R; else if (m == pen[2]) p.z = b.z1 - R; else p.z = b.z2 + R; }
+  }
+}
+const locEl = document.getElementById('loc'); let bob = 0, last = performance.now(), locTxt = '';
+const stEl = document.getElementById('st'); let stTxt = '';
+let trainX = 0, trainV = 0, offS = 0, offT = 0;
+function trainMotion() {            // 문이 닫혀 있는 동안 출발 → 터널 주행 → 다음 역 도착
+  if (phase != 'closed') { trainX = 0; trainV = 0; return; }
+  const T = CLOSED_T - 6, u = clamp(CLOSED_T - phaseT - 3, 0, T), ta = 14, vm = TRAVEL / (T - ta), a = vm / ta; let s;
+  if (u < ta) { s = 0.5 * a * u * u; trainV = a * u; } else if (u < T - ta) { s = vm * (u - ta / 2); trainV = vm; } else { const r = T - u; s = TRAVEL - 0.5 * a * r * r; trainV = a * r; }
+  trainX = s < TRAVEL / 2 ? s : s - TRAVEL;
+}
+function tick(dt) {
+  doorT += Math.sign(doorTarget - doorT) * Math.min(Math.abs(doorTarget - doorT), dt / 2.2);
+  updateNPCs(dt);
+  trainMotion(); const inT = pos.z < -0.1;          // 보는 사람이 탄 쪽을 기준으로 반대쪽을 움직인다
+  offT = inT ? 0 : trainX; offS = inT ? -trainX : 0; sG.position.x = offS; tG.position.x = offT; setTrainEnv(Math.abs(trainX) > 60);
+  for (const l of leaves) { const t = l.kind == 0 ? ease(doorT * 1.2) : ease((doorT - 0.15) / 0.85); l.g.position.x = l.x + l.s * t * l.travel + (l.kind ? offT : offS); }
+}
+function movePlayer(dt, f, s, run) {
+    const len = Math.hypot(f, s), wasInside = pos.z < -0.2; let moving = false;
+    if (G.alive && len > 0) { if (G.seat) standUp(); else if (G.strap) letGo(); else if (!G.seatWait) { f /= len; s /= len; const sp = (run ? 4.0 * (G.boostT > 0 ? 2 : 1) : 1.9) * dt, ox = pos.x, oz = pos.z, n = Math.ceil(sp / 0.12);
+      for (let k = 0; k < n; k++) { pos.x += (-Math.sin(yaw) * f + Math.cos(yaw) * s) * sp / n; pos.z += (-Math.cos(yaw) * f - Math.sin(yaw) * s) * sp / n; pushFromNPCs(); collide(pos); }     // 빠를 때는 잘게 나눠 움직여 벽을 뚫지 않는다
+      bob += Math.min(sp, 4.0 * dt) * 3.3; moving = Math.hypot(pos.x - ox, pos.z - oz) > sp * 0.3; } }
+    else if (!G.seat && !G.strap) { pushFromNPCs(); collide(pos); }
+    return moving;
+}
+let qLevel = 2, qAuto = true, ftEma = 16, slowT = 0, frameN = 0;
+function setQuality(l) { qLevel = l; if (gtao) gtao.enabled = l >= 2; }
+function frame(now) {
+  const dtRaw = (now - last) / 1000, dt = Math.min(0.05, dtRaw); last = now; frameN++;
+  ftEma += (Math.min(200, dtRaw * 1000) - ftEma) * 0.05;
+  if (qAuto && playing && qLevel > 0) { slowT = ftEma > 30 ? slowT + dtRaw : Math.max(0, slowT - dtRaw);     // 느리면 효과를 한 단계씩 끈다
+    if (slowT > 2.5) { setQuality(qLevel - 1); slowT = 0; ftEma = 16; toast(qLevel == 1 ? '그래픽을 중간으로 낮췄습니다 (G로 변경)' : '그래픽을 낮음으로 낮췄습니다 (G로 변경)'); } }
+  tick(dt);
+  if (playing) {
+    let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0), s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    const run = !!(keys.ShiftLeft || keys.ShiftRight), moving = movePlayer(dt, f, s, run);
+    gameUpdate(dt, f, moving, run);
+    pos.y = G.eye + groundY(pos.x);
+    const shake = pos.z < -0.1 ? trainV / 16 : 0;
+    camera.position.set(pos.x, pos.y + (G.seat ? 0 : Math.sin(bob * 2) * 0.018) + (Math.sin(now * 0.031) + Math.sin(now * 0.047)) * 0.0022 * shake, pos.z); camera.rotation.set(pitch + G.punch, yaw, Math.sin(now * 0.0023) * 0.004 * shake);
+    const t = Math.abs(pos.x) > 34.3 ? '계단' : pos.z < -0.1 ? `${Math.max(1, Math.min(3, Math.round((pos.x + 20) / 20) + 1))}호차` : '강남역 승강장';
+    if (t != locTxt) locEl.textContent = locTxt = t;
+    const st = phase == 'open' ? `정차 중 · 출입문 ${Math.ceil(phaseT)}초 후 닫힘` : trainV > 0.05 ? `주행 중 · 다음 역까지 ${Math.max(0, Math.ceil(phaseT - 3))}초` : phaseT > 10 ? '출입문 닫힘 · 곧 출발' : '도착 · 곧 출입문 열림';
+    if (st != stTxt) stEl.textContent = stTxt = st;
+  } else { camera.position.set(pos.x, pos.y, pos.z); camera.rotation.set(pitch + Math.sin(now / 2600) * 0.008, yaw + Math.sin(now / 4100) * 0.05, 0); }
+  drawNPCs(dt, now / 1000);
+  if (hq && qLevel > 0 && composer) { grade.uniforms.time.value = (now % 1000) / 1000; composer.render(dt); } else renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code == 'KeyF' && playing) phaseT = Math.min(phaseT, 0.01); if (e.code == 'KeyG') { qAuto = false; setQuality((qLevel + 2) % 3); toast(['그래픽: 낮음', '그래픽: 중간', '그래픽: 높음'][qLevel], 1.4); } if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+function look(dx, dy) { yaw -= dx * 0.0022; pitch = Math.max(-1.45, Math.min(1.45, pitch - dy * 0.0022)); }
+let drag = false, lx = 0, ly = 0;
+function lock() { try { const p = canvas.requestPointerLock && canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+canvas.addEventListener('mousedown', e => { if (!playing) return; if (document.pointerLockElement !== canvas) { lock(); drag = true; lx = e.clientX; ly = e.clientY; } });
+addEventListener('mouseup', () => { drag = false; });
+addEventListener('mousemove', e => { if (!playing) return; if (document.pointerLockElement === canvas) look(e.movementX, e.movementY); else if (drag) { look(-(e.clientX - lx) * 1.4, -(e.clientY - ly) * 1.4); lx = e.clientX; ly = e.clientY; } });
+canvas.addEventListener('touchstart', e => { const t = e.touches[0]; lx = t.clientX; ly = t.clientY; }, { passive: true });
+canvas.addEventListener('touchmove', e => { if (!playing) return; const t = e.touches[0]; look(-(t.clientX - lx) * 1.6, -(t.clientY - ly) * 1.6); lx = t.clientX; ly = t.clientY; }, { passive: true });
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); resizePost(); });
+document.getElementById('start').addEventListener('click', () => {
+  document.getElementById('menu').classList.add('hide'); document.body.classList.add('play'); playing = true; lock();
+});
+
+/*__NPC__*/
+
+/*__GAME__*/
+
+(async function init() {
+  const loadEl = document.getElementById('load'), nextFrame = () => new Promise(r => setTimeout(r));
+  makeSigns();                                          // 사용할 글자를 먼저 수집
+  try { const s = [...seen].join(''); await Promise.race([Promise.all([400, 500, 700, 900].map(w => document.fonts.load(`${w} 40px "Noto Sans KR"`, s))), new Promise(r => setTimeout(r, 3500))]); } catch (e) {}
+  dry = false; loadEl.textContent = '재질 만드는 중…'; await nextFrame();
+  const S = makeSurfaces(); loadEl.textContent = '역 짓는 중…'; await nextFrame();
+  leaves = build(makeSigns(), S);
+  loadEl.textContent = '조명 계산 중…'; await nextFrame();
+  captureProbes(); captureProbes();                     // 한 번 더 찍어 반사광까지 반영
+  setupPost(); refillPickups();
+  await spawnNPCs(k => { loadEl.textContent = `승객 준비 중… ${k}/${NPC_N}`; });
+  window.__ready = true; window.__dbg = { pos, set: (x, z, y, p) => { pos.x = x; pos.z = z; yaw = y; pitch = p || 0; }, door: v => { phase = v ? 'open' : 'closed'; phaseT = 999; doorTarget = v; doorT = v; }, play: () => { playing = true; }, hq: v => { hq = v; qAuto = false; }, gstep: sec => { for (let i = 0; i < sec * 20; i++) { tick(0.05); gameUpdate(0.05, 0, false, false); } }, startRound, onDoorsClosed, train: () => ({ trainX, trainV, offS, offT }), walk: (sec, run) => { const x0 = pos.x, z0 = pos.z; for (let i = 0; i < sec * 60; i++) { movePlayer(1 / 60, 1, 0, run); gameUpdate(1 / 60, 1, true, run); } return Math.hypot(pos.x - x0, pos.z - z0) / sec; }, probe: (px, py0, py1) => { const rc = new THREE.Raycaster(), out = []; camera.updateMatrixWorld(); let last = ''; for (let y = py0; y < py1; y++) { rc.setFromCamera(new THREE.Vector2(px / innerWidth * 2 - 1, -(y / innerHeight * 2 - 1)), camera); const h = rc.intersectObjects(scene.children.filter(o => o !== camera), true)[0]; const k = h ? h.object.type + (h.object.isSkinnedMesh ? '#' + npcs.findIndex(n => n.P.g === h.object.parent) + ':' + (npcs.find(n => n.P.g === h.object.parent) || {}).state : '') + ' ' + (h.object.material.color ? h.object.material.color.getHexString() : '?') + ' r' + (h.object.material.roughness ?? '') + ' d' + h.distance.toFixed(2) + ' @' + h.point.x.toFixed(1) + ',' + h.point.y.toFixed(2) + ',' + h.point.z.toFixed(2) : 'none'; const kk = k.split(' d')[0]; if (kk != last) { out.push(y + ': ' + k); last = kk; } } return out; }, G, pickups, seats, attack, interact, whistle, killNPC, setQ: l => { qAuto = false; setQuality(l); }, sim: sec => { for (let i = 0; i < sec * 20; i++) tick(0.05); }, npcs, doorInfo, stats: () => { const c = {}; for (const n of npcs) c[n.state] = (c[n.state] || 0) + 1; return { c, phase, phaseT, verts: npcs.reduce((a, n) => a + n.P.verts, 0) }; } };
+  document.getElementById('load').classList.add('hide');
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
