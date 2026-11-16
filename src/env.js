@@ -574,20 +574,20 @@ function build(T, S) {
         if (e > 0) { bb(B, B + 0.5, -0.1, 0.004, ZC - 0.7, ZC + 0.7, mat.steelD); bb(B, B + 0.5, 1.97, 2.03, ZC - 0.7, ZC + 0.7, mat.rubber);
           for (const dz of [-0.7, 0.7]) for (let k = 0; k < 5; k++) bb(B + k * 0.1, B + k * 0.1 + 0.1, 0, 2.0, ZC + dz - (k % 2 ? 0.03 : 0.06), ZC + dz + (k % 2 ? 0.03 : 0.06), mat.rubber); } }
     }
-    for (const lx of [-6.5, 0, 6.5]) { const p = new THREE.PointLight(0xf2f7ff, 2.6, 12, 2); p.position.set(c + lx, 1.35, ZC); tG.add(p); }
+    { const p = new THREE.PointLight(0xf2f7ff, 5.2, 17, 2); p.position.set(c, 1.5, ZC); tG.add(p); }       // 칸마다 등 하나(나머지 밝기는 찍어 둔 반사광이 맡는다)
   });
   block(-31, 31, -4, -3.16);
   ZONE = 'p'; stat = statS;
 
   /* ── 조명 ── */
   scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d4ca, 0.2));
-  for (const x of [-30, -18, -6, 6, 18, 30]) { const p = new THREE.PointLight(0xfff7ea, 6, 26, 2); p.position.set(x, 2.7, 3.4); sG.add(p); }
+  for (const x of [-25.5, -8.5, 8.5, 25.5]) { const p = new THREE.PointLight(0xfff7ea, 8.5, 30, 2); p.position.set(x, 2.7, 3.4); sG.add(p); }
 
   /* ── 정적 메시 병합(역과 열차를 따로) ── */
   for (const [src, dst] of [[statS, sG], [statT, tG]]) { src.updateMatrixWorld(true); const by = new Map();
     src.traverse(o => { if (o.isMesh) { const g = o.geometry.clone().applyMatrix4(o.matrixWorld); if (o.matrixWorld.determinant() < 0) { const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i]; idx[i] = idx[i + 2]; idx[i + 2] = t; } }
       if (!by.has(o.material.uuid)) by.set(o.material.uuid, { m: o.material, gs: [] }); by.get(o.material.uuid).gs.push(g); } });
-    for (const { m, gs } of by.values()) { const me = new THREE.Mesh(gs.length > 1 ? mergeGeometries(gs) : gs[0], m); me.renderOrder = m.transparent ? 2 : 0; me.frustumCulled = false; dst.add(me); } }
+    for (const { m, gs } of by.values()) { const me = new THREE.Mesh(gs.length > 1 ? mergeGeometries(gs) : gs[0], m); me.renderOrder = m.transparent ? 2 : 0; me.frustumCulled = false; me.matrixAutoUpdate = false; dst.add(me); } }
   return leaves;
 }
 
@@ -608,3 +608,4 @@ function setupPost() {
   composer.addPass(grade); composer.addPass(new OutputPass());
 }
 function resizePost() { if (composer) { composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight); } }
+const PR_MAX = Math.min(window.devicePixelRatio || 1, 1.5);

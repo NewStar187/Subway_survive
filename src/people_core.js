@@ -20,7 +20,7 @@ const BONE_PARENT = [-1, 0, 1, 2, 3, 4, 3, 6, 7, 8, 9, 8, 3, 12, 13, 14, 15, 14,
 
 /* ───────────── 메시 빌더: 사람 한 명을 하나의 이어진 표면으로 만든다 ───────────── */
 class MB {
-  constructor(q = 1) { this.q = q; this.pos = []; this.col = []; this.si = []; this.sw = []; this.idx = []; }
+  constructor(q = 1) { this.q = q; this.lite = q < 0.35; this.pos = []; this.col = []; this.si = []; this.sw = []; this.idx = []; }
   v(p, c, rough, w) {
     const i = this.pos.length / 3; this.pos.push(p[0], p[1], p[2]); this.col.push(c[0], c[1], c[2], rough);
     const e = []; for (const k in w) if (w[k] > 1e-4) e.push([+k, w[k]]); e.sort((a, b) => b[1] - a[1]); e.length = Math.min(e.length, 4);
@@ -82,13 +82,15 @@ function loft(mb, st, o) {
 }
 // 임의의 경로를 따라가는 관(끈, 눈썹, 안경테 등). up 방향이 두께 방향이 된다.
 function tube(mb, pts, o) {
+  if (mb.lite && (o.rx ?? Math.max(...pts.map(p => p.rx || 0))) < 0.006) return null;      // 멀리서 쓰는 모델에는 가는 장식을 넣지 않는다
   let len = 0; const st = pts.map((q, i) => { if (i) len += vlen(vsub(q.p, pts[i - 1].p));
     const T = vnorm(vsub(pts[Math.min(i + 1, pts.length - 1)].p, pts[Math.max(i - 1, 0)].p)), up = q.up || o.up || [0, 0, 1];
     const Bv = vnorm(vcross(up, T)), Nv = vnorm(vcross(T, Bv)), rx = q.rx ?? o.rx, ry = q.ry ?? o.ry ?? rx;
     return { t: len + i * 1e-6, c: q.p, rx, rf: ry, rb: ry, n: o.n || 2, B: Bv, N: Nv }; });
-  return loft(mb, st, { seg: 8, ds: 0.02, ...o });
+  return loft(mb, st, { ds: 0.02, ...o, seg: mb.lite ? 5 : (o.seg || 8) });
 }
 function ellipsoid(mb, c, ax, rad, col, rough, w, nu = 12, nv = 8) {
+  if (mb.lite) { if (Math.max(rad[0], rad[1], rad[2]) < 0.0095) return; nu = Math.max(6, Math.round(nu * 0.55)); nv = Math.max(4, Math.round(nv * 0.55)); }
   const rows = [];
   for (let j = 0; j <= nv; j++) { const th = PI * j / nv, row = [];
     for (let i = 0; i < nu; i++) { const ph = TAU * i / nu, a = Math.sin(th) * Math.cos(ph) * rad[0], b = Math.cos(th) * rad[1], d = Math.sin(th) * Math.sin(ph) * rad[2];
@@ -143,7 +145,7 @@ function makePerson(seed, q = 1, opt = {}) {
   const B = { fem, old, bulk, sw: (fem ? 0.176 : 0.2) * rr(0.97, 1.03), hip: (fem ? 0.168 : 0.160) * bulk, waist: (fem ? 0.124 : 0.144) * bulk, chestW: (fem ? 0.142 : 0.156) * (0.5 + 0.5 * bulk), chestF: (fem ? 0.106 : 0.11) * bulk,
     dep: 0.7 + 0.3 * bulk, belly: Math.max(0, bulk - 1.03) * 0.4 + (old ? 0.012 : 0), limb: (fem ? 0.86 : 1) * (0.7 + 0.3 * bulk), neckR: fem ? 0.042 : 0.05 };
   B.sx = B.sw - 0.016;
-  const SEG = n => Math.max(6, Math.round(n * q)), mb = new MB(q);
+  const SEG = n => Math.max(q < 0.35 ? 5 : 6, Math.round(n * q)), mb = new MB(q);
 
   /* 차림 고르기 */
   const skinC = C(pick(SKIN)), hairC = C(old ? pick(GRAY) : pick(HAIR));
@@ -389,11 +391,11 @@ function makePerson(seed, q = 1, opt = {}) {
     const ps = -sd, W = [ax, 0.84, 0.002], hm = B.limb * (fem ? 0.97 : 1), WR = sd > 0 ? WRL : WRR, F1 = sd > 0 ? FL1 : FR1, F2 = sd > 0 ? FL2 : FR2, TH = sd > 0 ? THL : THR;
     loft(mb, [[0, 0.019, 0.026], [0.028, 0.0155, 0.037], [0.065, 0.0135, 0.041], [0.092, 0.0115, 0.039]].map(([d, rx, rz]) => ({ t: d, c: [W[0] + ps * 0.003, W[1] - d * hm, W[2] + 0.002], rx: rx * hm, rf: rz * hm, rb: rz * hm, n: 2.25 })),
       { seg: SEG(12), ds: 0.015, col: skinC, rough: 0.6, w: { [WR]: 1 }, cap1: 'round', capLen: 0.006 });
-    [[0.0295, 0.066, 0.0088], [0.0098, 0.074, 0.0092], [-0.0098, 0.069, 0.0088], [-0.0285, 0.054, 0.0078]].forEach(([z, L, rad]) => { L *= hm; rad *= hm; const y0 = W[1] - 0.084 * hm;
+    if (!mb.lite) [[0.0295, 0.066, 0.0088], [0.0098, 0.074, 0.0092], [-0.0098, 0.069, 0.0088], [-0.0285, 0.054, 0.0078]].forEach(([z, L, rad]) => { L *= hm; rad *= hm; const y0 = W[1] - 0.084 * hm;
       loft(mb, [[-0.004, 1], [L * 0.5, 0.97], [L - rad, 0.86]].map(([t, k]) => ({ t, c: [W[0] + ps * 0.004, y0 - t, W[2] + 0.002 + z * hm], rx: rad * k * 0.92, rf: rad * k, rb: rad * k, n: 2.1 })),
         { seg: SEG(8), ds: 0.012, colFn: (p, t) => cmul(skinC, 1 - 0.07 * gauss((t - L * 0.5) / 0.004)), rough: 0.6, wFn: (p, t) => { const f = smooth(t, L * 0.4, L * 0.6), b = 1 - smooth(t, 0, 0.012); return { [WR]: b * 0.5, [F1]: (1 - f) * (1 - b * 0.5), [F2]: f }; }, cap1: 'round' }); });
     const Tb = [W[0] + ps * 0.008, W[1] - 0.026 * hm, W[2] + 0.027 * hm], td = vnorm([ps * 0.3, -0.82, 0.48]), tN = vnorm(vcross(td, [1, 0, 0])), tB = vcross(tN, td);
-    loft(mb, [[0, 0.0125], [0.03, 0.0112], [0.052, 0.0095]].map(([t, rad]) => ({ t, c: vadd(Tb, vmul(td, t * hm)), rx: rad * hm, rf: rad * hm, rb: rad * hm, n: 2.1, B: tB, N: tN })), { seg: SEG(8), ds: 0.012, col: skinC, rough: 0.6, wFn: (p, t) => { const b = 1 - smooth(t, 0, 0.014); return { [WR]: b * 0.6, [TH]: 1 - b * 0.6 }; }, cap0: 'round', cap1: 'round' });
+    if (!mb.lite) loft(mb, [[0, 0.0125], [0.03, 0.0112], [0.052, 0.0095]].map(([t, rad]) => ({ t, c: vadd(Tb, vmul(td, t * hm)), rx: rad * hm, rf: rad * hm, rb: rad * hm, n: 2.1, B: tB, N: tN })), { seg: SEG(8), ds: 0.012, col: skinC, rough: 0.6, wFn: (p, t) => { const b = 1 - smooth(t, 0, 0.014); return { [WR]: b * 0.6, [TH]: 1 - b * 0.6 }; }, cap0: 'round', cap1: 'round' });
   }
 
   /* ── 하의·다리·신발 ── */
@@ -451,6 +453,7 @@ function makePerson(seed, q = 1, opt = {}) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(mb.pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(mb.col, 4));
   geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(mb.si, 4)); geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(mb.sw, 4));
   geo.setIndex(mb.idx); geo.computeVertexNormals();
+  if (opt.geoOnly) return geo;
   const BP = [[0, 0, 0], [0, 0.92, 0], [0, 1.04, 0], [0, 1.22, 0], [0, 1.455, -0.005], [0, 1.5, 0.004]];
   for (const sd of [1, -1]) { const ax = sd * B.sx, hm = B.limb * (fem ? 0.97 : 1); BP.push([ax, 1.385, 0], [ax, 1.1, 0], [ax, 0.84, 0.002], [ax - sd * 0.004, 0.84 - 0.088 * hm, 0.004], [ax - sd * 0.004, 0.84 - 0.122 * hm, 0.004], [ax - sd * 0.008, 0.84 - 0.026 * hm, 0.029 * hm]); }
   for (const sd of [1, -1]) BP.push([sd * 0.088, 0.9, 0], [sd * 0.086, 0.49, 0], [sd * 0.084, 0.075, 0]);
@@ -459,8 +462,9 @@ function makePerson(seed, q = 1, opt = {}) {
   const mesh = new THREE.SkinnedMesh(geo, personMat); mesh.add(bones[0]); mesh.bind(new THREE.Skeleton(bones));
   mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
   const grp = new THREE.Group(); grp.scale.setScalar(s); grp.add(mesh);
+  let lo = null; if (opt.lod) { lo = new THREE.SkinnedMesh(makePerson(seed, opt.lod, { geoOnly: true }), personMat); lo.bind(mesh.skeleton, mesh.bindMatrix); lo.frustumCulled = false; lo.visible = false; grp.add(lo); }     // 멀리서 쓰는 가벼운 모델(같은 뼈대를 공유)
   const J = {}; BONE_NAMES.forEach((n, i) => J[n] = bones[i]);
-  return { g: grp, J, s, B, tags: { hat: hairT.includes('cap') ? 'cap' : hairT.includes('beanie') ? 'beanie' : '', mask, glasses, bag, ear, top: topT, old, fem }, items: makeItems(J.wrR), lean: old ? 0.1 : rr(0.0, 0.03), ph: r() * 6.28, verts: mb.pos.length / 3 };
+  return { g: grp, hi: mesh, lo, seed, J, s, B, tags: { hat: hairT.includes('cap') ? 'cap' : hairT.includes('beanie') ? 'beanie' : '', mask, glasses, bag, ear, top: topT, old, fem }, items: makeItems(J.wrR), lean: old ? 0.1 : rr(0.0, 0.03), ph: r() * 6.28, verts: mb.pos.length / 3 };
 }
 const personMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1, metalness: 0, envMapIntensity: 0.55 });
 personMat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n\troughnessFactor = clamp( vColor.a, 0.05, 1.0 );'); };

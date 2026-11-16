@@ -1,7 +1,7 @@
 /* ───────────── 플레이어·미션 ───────────── */
 const PLAYER = { player: true };
 const G = { alive: true, boarded: false, round: 0, mission: null, done: false, knives: 1, bullets: 1, drink: false, slot: 0, seat: null, seatWait: null, eye: 1.48, glowT: 0, car: -1, prog: 0, hold: 0, seatsUsed: new Set(), cool: 0, wCool: 0, lastId: 0,
-  punch: 0, swing: null, sip: null, boostT: 0, bought: -1, strap: null, phoneLook: false, phoneK: 0, fireT: 9, dryT: 9, equipT: 1, cylA: 0, lastPhase: 'closed' };
+  ghost: false, punch: 0, swing: null, sip: null, boostT: 0, bought: -1, strap: null, phoneLook: false, phoneK: 0, fireT: 9, dryT: 9, equipT: 1, cylA: 0, lastPhase: 'closed' };
 const ui = (() => {
   const st = document.createElement('style');
   st.textContent = `#mis,#inv,#pr,#toast{position:fixed;pointer-events:none;opacity:0;transition:opacity .4s;text-shadow:0 1px 5px #000}
@@ -29,11 +29,11 @@ function toast(s, sec = 2.4) { ui.toast.textContent = s; ui.toast.style.opacity 
 let AC = null, rumble = null;
 const audio = () => { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state == 'suspended') AC.resume(); } catch (e) {} return AC; };
 function noiseBuf(a, sec, decay) { const n = (a.sampleRate * sec) | 0, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (decay ? Math.exp(-i / n * decay) : 1); return buf; }
-function sWhistle() { const a = audio(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), t = a.currentTime; o.type = 'sine';
+function sWhistle(vol = 1) { const a = audio(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), t = a.currentTime; o.type = 'sine';
   o.frequency.setValueAtTime(1650, t); o.frequency.linearRampToValueAtTime(2350, t + 0.12); o.frequency.linearRampToValueAtTime(1950, t + 0.42);
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16, t + 0.03); g.gain.linearRampToValueAtTime(0, t + 0.45); o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.47); }
-function sShot() { const a = audio(); if (!a) return; const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(); s.buffer = noiseBuf(a, 0.4, 9); f.type = 'lowpass'; f.frequency.value = 2600; g.gain.value = 0.8; s.connect(f).connect(g).connect(a.destination); s.start();
-  const o = a.createOscillator(), g2 = a.createGain(), t = a.currentTime; o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.18); g2.gain.setValueAtTime(0.5, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.2); o.connect(g2).connect(a.destination); o.start(t); o.stop(t + 0.21); }
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16 * vol, t + 0.03); g.gain.linearRampToValueAtTime(0, t + 0.45); o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.47); }
+function sShot(vol = 1) { const a = audio(); if (!a) return; const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(); s.buffer = noiseBuf(a, 0.4, 9); f.type = 'lowpass'; f.frequency.value = 600 + 2000 * vol; g.gain.value = 0.8 * vol; s.connect(f).connect(g).connect(a.destination); s.start();
+  const o = a.createOscillator(), g2 = a.createGain(), t = a.currentTime; o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.18); g2.gain.setValueAtTime(0.5 * vol, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.2); o.connect(g2).connect(a.destination); o.start(t); o.stop(t + 0.21); }
 function sWhoosh() { const a = audio(); if (!a) return; const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), t = a.currentTime; s.buffer = noiseBuf(a, 0.3, 0); f.type = 'bandpass'; f.Q.value = 1.4; f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(2600, t + 0.16); f.frequency.exponentialRampToValueAtTime(700, t + 0.3);
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.28, t + 0.12); g.gain.linearRampToValueAtTime(0, t + 0.3); s.connect(f).connect(g).connect(a.destination); s.start(); }
 function sBlip(f = 880, len = 0.09, vol = 0.1, at = 0) { const a = audio(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), t = a.currentTime + at; o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(vol, t); g.gain.linearRampToValueAtTime(0, t + len); o.connect(g).connect(a.destination); o.start(t); o.stop(t + len + 0.01); }
@@ -62,7 +62,7 @@ const softTex = (() => { const c = document.createElement('canvas'); c.width = c
 const flashM = new THREE.MeshBasicMaterial({ map: flashTex, color: new THREE.Color(4, 3.2, 2), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
 const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.05, -0.17); rigGun.add(muzzle);
 const flashA = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), flashM), flashB = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.09), flashM); flashB.rotation.y = Math.PI / 2; flashB.position.z = -0.08; muzzle.add(flashA, flashB); muzzle.visible = false;
-const flash = new THREE.PointLight(0xffc27a, 0, 9, 2); camera.add(flash); flash.position.set(0.1, -0.05, -0.6);
+let flashK = 0;                      // 총구 화염은 잠깐 화면을 밝히는 것으로 대신한다(조명을 하나 더 두면 모든 표면 계산이 느려진다)
 // 칼을 쥔 손
 const rigKnife = new THREE.Object3D(); vmRoot.add(rigKnife); rigKnife.add(newItem('knife'));
 blob(rigKnife, [0.012, -0.002, 0.062], [0.026, 0.034, 0.046], skinM);
@@ -96,10 +96,10 @@ const BOOST = 10;                    // 음료수를 마신 뒤 달리기 속도
 function slots() { return [['맨손', true], [`칼 ×${G.knives}`, G.knives > 0], [`리볼버 ${G.bullets}/6`, true], ['음료수', G.drink], ['휴대폰', true]]; }
 function setSlot(i) { const s = slots(), dir = i >= G.slot ? 1 : -1; for (let k = 0; k < 5; k++) { const j = ((i + k * dir) % 5 + 5) % 5; if (s[j][1]) { if (j != G.slot) { G.slot = j; G.equipT = 0; G.swing = null; G.phoneLook = false; } break; } } drawInv(); }
 function drawInv() { ui.inv.innerHTML = slots().map((s, i) => `<span class="${i == G.slot ? 'on' : s[1] ? '' : 'no'}">${i + 1} ${s[0]}</span>`).join('') + (G.boostT > 0 ? `<span class="boost">질주 ${Math.ceil(G.boostT)}초</span>` : '');
-  rigKnife.visible = G.slot == 1 && G.knives > 0; rigGun.visible = G.slot == 2; rigCan.visible = G.slot == 3 && G.drink; rigPhone.visible = G.slot == 4; }
+  const a = G.alive; rigKnife.visible = a && G.slot == 1 && G.knives > 0; rigGun.visible = a && G.slot == 2; rigCan.visible = a && G.slot == 3 && G.drink; rigPhone.visible = a && G.slot == 4; ui.inv.style.visibility = a ? '' : 'hidden'; }
 
 /* ───────────── 주울 수 있는 물건: 열차와 승강장 곳곳 ───────────── */
-const pickups = [], pick = a => a[(Math.random() * a.length) | 0];
+const pickups = [], pick = a => a[(Math.random() * a.length) | 0]; let pickId = 1;
 function trainSpot(c) {
   const C = CARS[c], k = Math.random(), bench = () => C + pick([-4.8, 0, 4.8]) + rnd(-1.4, 1.4), near = Math.random() < 0.5;
   if (k < 0.3) return { x: bench(), y: 1.822, z: near ? -0.44 : -2.96 };                                   // 선반 위
@@ -119,16 +119,27 @@ function platformSpot() {
 }
 function spawnPickup(frame, c) {
   const sp = frame == 't' ? trainSpot(c) : platformSpot(); if (pickups.some(p => p.frame == frame && Math.hypot(p.x - sp.x, p.z - sp.z) < 0.5 && Math.abs(p.y - sp.y) < 0.4)) return false;
-  const type = Math.random() < 0.6 ? 'bullet' : 'knife', g = new THREE.Group(), o = newItem(type); o.rotation.z = Math.PI / 2;
-  if (type == 'bullet') { o.scale.setScalar(1.5); o.position.set(0.03, 0.0085, 0); } else o.position.y = 0.011;
-  g.add(o); g.position.set(sp.x, sp.y, sp.z); g.rotation.y = Math.random() * 6.28; scene.add(g);
-  const p = { type, frame, car: c, x: sp.x, y: sp.y, z: sp.z, g, seat: sp.seat }; if (sp.seat) sp.seat.item = p; pickups.push(p); return true;
+  const p = addPickup(pickId++, Math.random() < 0.6 ? 'bullet' : 'knife', frame, c, sp.x, sp.y, sp.z, Math.random() * 6.28); p.seat = sp.seat; if (sp.seat) sp.seat.item = p; return true;
 }
+function addPickup(id, type, frame, car, x, y, z, ry) {
+  const g = new THREE.Group(), o = newItem(type); o.rotation.z = Math.PI / 2;
+  if (type == 'bullet') { o.scale.setScalar(1.5); o.position.set(0.03, 0.0085, 0); } else o.position.y = 0.011;
+  g.add(o); g.position.set(x, y, z); g.rotation.y = ry; scene.add(g); const p = { id, type, frame, car, x, y, z, g }; pickups.push(p); return p;
+}
+function syncPickups(list) {         // 참가자 쪽: 방장이 보낸 목록에 맞춘다
+  const ids = new Set(list.map(e => e[0])); for (const p of pickups.slice()) if (!ids.has(p.id) || p.local) removePickup(p);
+  for (const e of list) if (!pickups.some(p => p.id == e[0])) addPickup(e[0], e[1] ? 'knife' : 'bullet', e[2] ? 't' : 's', e[3], e[4], e[5], e[6], e[7]);
+}
+function onGot(type) { sBlip(1100, 0.06);
+  if (type == 'knife') { G.knives++; toast('칼을 주웠다', 1.4); } else if (G.bullets < 6) { G.bullets++; toast('총알을 장전했다', 1.4); } else toast('총알이 가득 차서 버렸다', 1.4);
+  if (G.mission && G.mission.id == 8 && !G.done) { G.prog++; if (G.prog >= 2) complete(); } drawInv(); }
 function removePickup(p) { pickups.splice(pickups.indexOf(p), 1); scene.remove(p.g); if (p.seat) p.seat.item = null; }
 let pickT = 0;
 function refillPickups() {
+  if (!isHost()) return; const before = pickups.length;
   for (let c = 0; c < 3; c++) { let n = pickups.filter(p => p.frame == 't' && p.car == c).length; for (let k = 0; n < 6 && k < 14; k++) if (spawnPickup('t', c)) n++; }
   let n = pickups.filter(p => p.frame == 's').length; for (let k = 0; n < 12 && k < 30; k++) if (spawnPickup('s', -1)) n++;
+  if (pickups.length != before) sendPickups();
 }
 
 /* ───────────── 미션 ───────────── */
@@ -155,10 +166,10 @@ function onDoorsClosed() {           // 문이 닫히는 순간이 라운드의 
     }
   if (inside) { G.boarded = true; startRound(); }
 }
-function eliminate(why) { G.alive = false; document.getElementById('why').textContent = why; ui.over.style.display = 'flex'; try { document.exitPointerLock(); } catch (e) {} }
-function resetGame() { if (G.seat) G.seat.occ = null; Object.assign(G, { alive: true, boarded: false, round: 0, mission: null, done: false, knives: 1, bullets: 1, drink: false, slot: 0, seat: null, seatWait: null, glowT: 0, car: -1, prog: 0, lastId: 0, swing: null, sip: null, boostT: 0, bought: -1, phoneLook: false }); letGo();
+function eliminate(why, tell = true) { if (!G.alive) return; if (G.seat) standUp(); letGo(); G.alive = false; G.swing = null; G.sip = null; if (tell) toHost({ t: 'out' }); drawInv(); document.getElementById('why').textContent = why; document.getElementById('again').textContent = NET.solo ? '다시 시작' : '관전하기'; ui.over.style.display = 'flex'; try { document.exitPointerLock(); } catch (e) {} }
+function resetGame() { if (G.seat) { G.seat.occ = null; toHost({ t: 'stand' }); } Object.assign(G, { ghost: false, alive: true, boarded: false, round: 0, mission: null, done: false, knives: 1, bullets: 1, drink: false, slot: 0, seat: null, seatWait: null, glowT: 0, car: -1, prog: 0, lastId: 0, swing: null, sip: null, boostT: 0, bought: -1, phoneLook: false }); letGo();
   pos.x = 2.4; pos.z = 3.3; yaw = 0; pitch = -0.02; ui.over.style.display = 'none'; drawInv(); drawMission(); }
-document.getElementById('again').addEventListener('click', () => { resetGame(); lock(); });
+document.getElementById('again').addEventListener('click', () => { if (NET.solo) resetGame(); else { ui.over.style.display = 'none'; G.ghost = true; } lock(); });
 let misTxt = '';
 function drawMission() {
   let h;
@@ -169,13 +180,37 @@ function drawMission() {
 }
 
 /* ───────────── 공격 ───────────── */
-function killNPC(n) {
+function strike(n) {                 // 내가 승객을 처치: 미션을 따지고 방장에게 알린다
   if (!alive(n)) return; const cond = G.mission && G.mission.id == 10 && G.mission.cond[1](n);
+  if (G.mission && !G.done && (G.mission.id == 7 || (G.mission.id == 10 && cond))) complete();
+  toHost({ t: 'kill', n: npcs.indexOf(n) });
+}
+function killNPC(n) { strike(n); }
+function killNPCHost(n) {
+  if (!alive(n)) return;
   if (n.spot) { n.spot.occ = null; n.spot = null; }
   for (const d of doorInfo) { for (const l of d.lines) { const i = l.indexOf(n); if (i >= 0) l.splice(i, 1); } const j = d.alight.indexOf(n); if (j >= 0) d.alight.splice(j, 1); }
   n.state = 'dead'; n.deadT = 0; n.path = []; n.phone = false; n.moving = false; n.onArrive = null; n.after = null;
-  if (G.mission && !G.done && (G.mission.id == 7 || (G.mission.id == 10 && cond))) complete();
 }
+const zoneOf = (x, z) => (z < -0.1 ? 0 : 10) + clamp(Math.round((x + 20) / 20), 0, 2);      // 소리가 들리는 범위를 따지는 구역(칸 단위)
+function netEvent(m) {
+  const o = others.get(m.from), mz = zoneOf(pos.x, pos.z);
+  if (m.k == 'dead') { if (m.id == NET.id) eliminate('다른 플레이어에게 당했습니다.', false); return; }
+  if (m.k == 'swing') { if (o) { o.aimT = 0.42; o.aimItem = 'knife'; } return; }
+  if (m.k == 'whistle') { if (zoneOf(m.x, m.z) == mz) sWhistle(clamp(1.2 - Math.hypot(m.x - pos.x, m.z - pos.z) / 16, 0.25, 1)); return; }     // 같은 칸에서만 들린다
+  if (m.k == 'shot') { if (o) { o.aimT = 0.5; o.aimItem = 'gun'; }
+    const sz = zoneOf(m.o[0], m.o[2]), same = (sz >= 10) == (mz >= 10), near = Math.abs(sz % 10 - mz % 10) <= 1 && (same || doorT > 0.5);      // 인접한 칸까지 들린다
+    if (near) sShot(clamp(1.1 - Math.hypot(m.o[0] - pos.x, m.o[2] - pos.z) / 30, 0.2, 1) * (same ? 1 : 0.6));
+    const off = m.o[2] < -0.1 ? offT : offS; shotFx(new THREE.Vector3(m.o[0] + off, m.o[1], m.o[2]), new THREE.Vector3(m.e[0] + off, m.e[1], m.e[2]), m.hit, { x: 0, z: 0 }); }
+}
+function shotFx(m0, end, hit, d) {    // 탄도, 착탄 불꽃, 총구 연기
+  const L = m0.distanceTo(end), dir = end.clone().sub(m0).normalize();
+  const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, L, 5), tracerM.clone()); tr.position.copy(m0).lerp(end, 0.5); tr.quaternion.setFromUnitVectors(_up, dir); addFx(tr, 0.07, (f, u) => { f.o.material.opacity = 1 - u; });
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex, color: hit ? 0xff5040 : 0xffd9a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); sp.position.copy(end).addScaledVector(dir, -0.05); sp.scale.setScalar(0.3); addFx(sp, 0.12, (f, u) => { f.o.material.opacity = 1 - u; f.o.scale.setScalar(0.3 + u * 0.3); });
+  for (let i = 0; i < 3; i++) { const s = new THREE.Sprite(smokeM.clone()); s.position.copy(m0); const v = new THREE.Vector3(dir.x * 0.5 + rnd(-0.1, 0.1), 0.25 + rnd(0, 0.15), dir.z * 0.5 + rnd(-0.1, 0.1)); s.scale.setScalar(0.06); addFx(s, 0.9 + i * 0.2, (f, u, dt) => { f.o.position.addScaledVector(v, dt * (1 - u * 0.7)); f.o.scale.setScalar(0.06 + u * 0.28); f.o.material.opacity = 0.32 * (1 - u); }); }
+}
+const pvp = () => NET.started && !NET.over && !NET.solo;
+const rivals = () => pvp() ? [...others.values()].filter(o => o.alive && o.state != 'dead' && o.P) : [];
 function lineOfFire(ox, oz, tx, tz) {            // 벽과 유리는 막고, 열린 문과 통로만 지나간다
   if ((oz > -0.1) != (tz > -0.1)) { const x = ox + (tx - ox) * (-0.1 - oz) / (tz - oz); if (doorT < 0.8 || !doorXs.some(d => Math.abs(d - x) < 0.62)) return false; }
   if (oz < -0.1 && tz < -0.1) for (const bx of [-10, 10]) if ((ox - bx) * (tx - bx) < 0) { const z = oz + (tz - oz) * (bx - ox) / (tx - ox); if (Math.abs(z - ZC) > 0.6) return false; }
@@ -183,38 +218,31 @@ function lineOfFire(ox, oz, tx, tz) {            // 벽과 유리는 막고, 열
 }
 function knifeHit() {
   const fx2 = -Math.sin(yaw), fz = -Math.cos(yaw); let best = null, bd = 1.4;
-  for (const n of npcs) { if (!alive(n)) continue; const dx = n.x - pos.x, dz = n.z - pos.z, d = Math.hypot(dx, dz); if (d < bd && Math.abs(n.y - groundY(pos.x)) < 0.6 && (dx * fx2 + dz * fz) / (d || 1) > 0.5) { bd = d; best = n; } }
-  if (best) { killNPC(best); G.knives--; sBlip(150, 0.14, 0.16); toast('칼을 사용했다'); G.punch = -0.03; }
+  for (const n of npcs.concat(rivals())) { if (n.state == 'dead' || n.state == 'gone') continue; const dx = n.x - pos.x, dz = n.z - pos.z, d = Math.hypot(dx, dz); if (d < bd && Math.abs(n.y - groundY(pos.x)) < 0.6 && (dx * fx2 + dz * fz) / (d || 1) > 0.5) { bd = d; best = n; } }
+  if (best) { if (best.id) toHost({ t: 'hit', p: best.id }); else strike(best); G.knives--; sBlip(150, 0.14, 0.16); toast('칼을 사용했다'); G.punch = -0.03; }
 }
 function attack() {
   if (!G.alive || !playing || G.cool > 0 || G.seatWait || G.equipT < 0.8) return;
+  if ((G.slot == 1 || G.slot == 2) && (!NET.started || NET.over)) { toast('게임이 시작되면 쓸 수 있다', 1.2); G.cool = 0.5; return; }
   if (G.slot == 4) { G.cool = 0.3; G.phoneLook = !G.phoneLook; return; }                    // 휴대폰 보기/내리기
   if (G.slot == 3 && G.drink && !G.sip) { G.cool = 1.4; G.sip = { t: 0 }; return; }          // 음료수 마시기
-  if (G.slot == 1 && G.knives > 0) { G.cool = 0.55; G.swing = { t: 0, hit: false }; sWhoosh(); }
+  if (G.slot == 1 && G.knives > 0) { G.cool = 0.55; G.swing = { t: 0, hit: false }; sWhoosh(); toHost({ t: 'swing' }); }
   else if (G.slot == 2) { G.cool = 0.55; if (G.bullets <= 0) { G.dryT = 0; sBlip(1500, 0.03, 0.07); toast('총알이 없다', 1.2); return; }
-    G.bullets--; G.fireT = 0; G.punch = 0.05; G.cylA += Math.PI / 3; flash.intensity = 16; muzzle.visible = true; flashA.rotation.z = Math.random() * 6.28; flashA.scale.setScalar(0.8 + Math.random() * 0.5); sShot(); drawInv();
+    G.bullets--; G.fireT = 0; G.punch = 0.05; G.cylA += Math.PI / 3; flashK = 1; muzzle.visible = true; flashA.rotation.z = Math.random() * 6.28; flashA.scale.setScalar(0.8 + Math.random() * 0.5); sShot(); drawInv();
     const cp = Math.cos(pitch), d = { x: -Math.sin(yaw) * cp, y: Math.sin(pitch), z: -Math.cos(yaw) * cp }, o = { x: pos.x, y: camera.position.y, z: pos.z }; let best = null, bt = rayLimit(o, d);
-    for (const n of npcs) { if (!alive(n)) continue; const t = ((n.x - o.x) * d.x + (n.z - o.z) * d.z) / (d.x * d.x + d.z * d.z || 1e-6); if (t <= 0.2 || t > bt) continue;
-      const px = o.x + d.x * t, pz = o.z + d.z * t, h = o.y + d.y * t - n.y, top = (n.state == 'seated' ? 1.32 : 1.78) * n.P.s; if (Math.hypot(px - n.x, pz - n.z) < 0.27 && h > 0.05 && h < top && lineOfFire(o.x, o.z, n.x, n.z)) { bt = t; best = n; } }
-    if (best) killNPC(best);
-    // 탄도, 착탄 불꽃, 총구 연기
-    const m0 = muzzle.getWorldPosition(new THREE.Vector3()), end = new THREE.Vector3(o.x + d.x * bt, o.y + d.y * bt, o.z + d.z * bt), L = m0.distanceTo(end);
-    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, L, 5), tracerM.clone()); tr.position.copy(m0).lerp(end, 0.5); tr.quaternion.setFromUnitVectors(_up, end.clone().sub(m0).normalize()); addFx(tr, 0.07, (f, u) => { f.o.material.opacity = 1 - u; });
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex, color: best ? 0xff5040 : 0xffd9a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); sp.position.copy(end).addScaledVector(end.clone().sub(m0).normalize(), -0.05); sp.scale.setScalar(0.3); addFx(sp, 0.12, (f, u) => { f.o.material.opacity = 1 - u; f.o.scale.setScalar(0.3 + u * 0.3); });
-    for (let i = 0; i < 3; i++) { const s = new THREE.Sprite(smokeM.clone()); s.position.copy(m0); const v = new THREE.Vector3(d.x * 0.5 + rnd(-0.1, 0.1), 0.25 + rnd(0, 0.15), d.z * 0.5 + rnd(-0.1, 0.1)); s.scale.setScalar(0.06); addFx(s, 0.9 + i * 0.2, (f, u, dt) => { f.o.position.addScaledVector(v, dt * (1 - u * 0.7)); f.o.scale.setScalar(0.06 + u * 0.28); f.o.material.opacity = 0.32 * (1 - u); }); } }
+    for (const n of npcs.concat(rivals())) { if (n.state == 'dead' || n.state == 'gone') continue; const t = ((n.x - o.x) * d.x + (n.z - o.z) * d.z) / (d.x * d.x + d.z * d.z || 1e-6); if (t <= 0.2 || t > bt) continue;
+      const px = o.x + d.x * t, pz = o.z + d.z * t, h = o.y + d.y * t - n.y, top = (n.state == 'seated' || n.pose == 1 ? 1.32 : 1.78) * n.P.s; if (Math.hypot(px - n.x, pz - n.z) < 0.27 && h > 0.05 && h < top && lineOfFire(o.x, o.z, n.x, n.z)) { bt = t; best = n; } }
+    if (best) { if (best.id) toHost({ t: 'hit', p: best.id }); else strike(best); }
+    const m0 = muzzle.getWorldPosition(new THREE.Vector3()), end = new THREE.Vector3(o.x + d.x * bt, o.y + d.y * bt, o.z + d.z * bt); shotFx(m0, end, !!best, d);
+    toHost({ t: 'shot', o: [+o.x.toFixed(2), +(o.y - 0.12).toFixed(2), +o.z.toFixed(2)], e: [+(o.x + d.x * bt).toFixed(2), +(o.y + d.y * bt).toFixed(2), +(o.z + d.z * bt).toFixed(2)], hit: best ? 1 : 0 }); }
 }
 
 /* ───────────── 앉기·줍기·자판기 ───────────── */
-function letGo() { if (G.strap) { if (G.strap.spot) G.strap.spot.occ = null; G.strap = null; } }
+function letGo() { if (G.strap) { G.strap = null; toHost({ t: 'unstrap' }); } }
+const seatTaken = sp => npcs.some(n => n.state == 'seated' && Math.abs(n.x - sp.x) < 0.2 && Math.abs(n.z - sp.z) < 0.2) || [...others.values()].some(o => o.pose == 1 && o.state != 'dead' && Math.abs(o.x - sp.x) < 0.2 && Math.abs(o.z - sp.z) < 0.2);
 function sitNow(sp) { letGo(); G.seat = sp; G.seatWait = null; sp.occ = PLAYER; pos.x = sp.x; pos.z = sp.z + (sp.yaw == 0 ? 0.1 : -0.1); G.seatsUsed.add(seats.indexOf(sp)); if (G.mission && G.mission.id == 3 && !G.done) { G.prog = G.seatsUsed.size; if (G.prog >= 3) complete(); } }
-function standUp() { const sp = G.seat; if (!sp) return; sp.occ = null; G.seat = null; pos.x = sp.ax; pos.z = sp.az; }
-function trySit(sp) {
-  const n = sp.occ;
-  if (n && n !== PLAYER) { if (n.state == 'seated') { leaveSpot(n, () => goToSpot(n, pickSpot(n.car, n.x))); sp.occ = PLAYER; G.seatWait = { sp, t: 0 }; toast('자리를 비켜 받는 중', 1.2); }
-    else if (n.state == 'tospot') { sp.occ = PLAYER; n.spot = null; n.path = []; goToSpot(n, pickSpot(n.car, n.x)); sitNow(sp); }
-    else toast('잠시 후 다시 시도', 1.2); return; }
-  sitNow(sp);
-}
+function standUp() { const sp = G.seat; if (!sp) return; sp.occ = null; G.seat = null; pos.x = sp.ax; pos.z = sp.az; toHost({ t: 'stand' }); }
+function trySit(sp) { G.seatWait = { sp, t: 0 }; if (seatTaken(sp)) toast('자리를 비켜 받는 중', 1.2); toHost({ t: 'sit', i: seats.indexOf(sp) }); }      // 방장이 자리를 확인해 준다
 function findLook() {                // 지금 상호작용할 수 있는 대상
   if (!G.alive || G.seatWait) return null;
   const fx2 = -Math.sin(yaw), fz = -Math.cos(yaw), cp = Math.cos(pitch), dir = [fx2 * cp, Math.sin(pitch), fz * cp], oy = camera.position.y, fr = pos.z < -0.1 ? 't' : 's'; let best = null, ba = 0.82;
@@ -224,10 +252,10 @@ function findLook() {                // 지금 상호작용할 수 있는 대상
   if (G.seat) return { kind: 'stand', text: 'E 일어나기' };
   if (pos.z < -0.2 && pitch > 0.12) { let br = null, bd = 0.75;      // 위를 보면 가까운 손잡이를 잡을 수 있다
     for (const sp of seats) { const s = sp.yaw == 0 ? 1 : -1, rz = sp.z + s * 0.42, d = Math.hypot(sp.x - pos.x, rz - pos.z); if (d < bd) { bd = d; br = { x: sp.x, z: rz, s }; } }
-    if (br) { const spot = straps.find(q => Math.abs(q.rx - br.x) < 0.05 && Math.abs(q.z - (br.z + br.s * 0.14)) < 0.1); return spot && spot.occ ? { kind: 'none', text: '다른 승객이 잡고 있다' } : { kind: 'strap', r: br, spot, text: 'E 손잡이 잡기' }; } }
+    if (br) { const sz = br.z + br.s * 0.14, busy = npcs.some(n => n.state == 'strap' && Math.abs(n.z - sz) < 0.15 && Math.abs(n.x - br.x) < 0.4) || [...others.values()].some(o => o.pose == 2 && Math.abs(o.z - sz) < 0.15 && Math.abs(o.x - br.x) < 0.2); return busy ? { kind: 'none', text: '다른 승객이 잡고 있다' } : { kind: 'strap', r: br, text: 'E 손잡이 잡기' }; } }
   if (pos.z > 5.3) for (const vx of [0.7, 17]) if (Math.abs(pos.x - vx) < 0.9) return G.bought == G.round ? { kind: 'none', text: '이번 라운드에는 이미 샀다' } : G.drink ? { kind: 'none', text: '음료수를 이미 들고 있다' } : { kind: 'vend', text: 'E 음료수 구매' };     // 라운드마다 1개
   if (pos.z < -0.2) { let bs = null, bd = 1.25; for (const sp of seats) { const dx = sp.x - pos.x, dz = sp.z - pos.z, d = Math.hypot(dx, dz); if (d < bd && (dx * fx2 + dz * fz) / (d || 1) > 0.5) { bd = d; bs = sp; } }
-    if (bs && bs.occ !== PLAYER) return { kind: 'sit', sp: bs, text: bs.occ ? 'E 앉기 (자리 양보 받기)' : 'E 앉기' }; }
+    if (bs && bs !== G.seat) return { kind: 'sit', sp: bs, text: seatTaken(bs) ? 'E 앉기 (자리 양보 받기)' : 'E 앉기' }; }
   return null;
 }
 function interact() {
@@ -235,21 +263,18 @@ function interact() {
   if (L.kind == 'none') return;
   if (L.kind == 'stand') return standUp();
   if (L.kind == 'letgo') return letGo();
-  if (L.kind == 'strap') { G.strap = { x: L.r.x, z: L.r.z, spot: L.spot }; if (L.spot) L.spot.occ = PLAYER; pos.x = L.r.x + 0.16 * Math.cos(yaw); pos.z = L.r.z + L.r.s * 0.16; return; }
+  if (L.kind == 'strap') { G.strap = { x: L.r.x, z: L.r.z, s: L.r.s }; toHost({ t: 'strap', x: L.r.x, z: L.r.z + L.r.s * 0.14 }); pos.x = L.r.x + 0.16 * Math.cos(yaw); pos.z = L.r.z + L.r.s * 0.16; return; }
   if (L.kind == 'sit') return trySit(L.sp);
   if (L.kind == 'vend') { G.drink = true; G.bought = G.round; G.slot = 3; G.equipT = 0; drawInv(); sBlip(520, 0.2); toast(G.mission && G.mission.id == 5 && !G.done ? '음료수를 샀다 · 문이 닫히기 전에 열차로' : '음료수를 샀다 · 클릭해서 마시면 10초 동안 질주'); return; }
-  if (L.kind == 'pick') { const p = L.p; removePickup(p); sBlip(1100, 0.06);
-    if (p.type == 'knife') { G.knives++; toast('칼을 주웠다', 1.4); } else if (G.bullets < 6) { G.bullets++; toast('총알을 장전했다', 1.4); } else toast('총알이 가득 차서 버렸다', 1.4);
-    if (G.mission && G.mission.id == 8 && !G.done) { G.prog++; if (G.prog >= 2) complete(); } drawInv(); }
+  if (L.kind == 'pick') toHost({ t: 'pick', id: L.p.id });
 }
-function whistle() { if (!G.alive || G.wCool > 0) return; G.wCool = 0.9; sWhistle(); if (G.mission && G.mission.id == 6 && !G.done) { G.prog++; if (G.prog >= 3) complete(); } }
+function whistle() { if (!G.alive || G.wCool > 0) return; G.wCool = 0.9; sWhistle(); toHost({ t: 'whistle', x: +pos.x.toFixed(1), z: +pos.z.toFixed(1) }); if (G.mission && G.mission.id == 6 && !G.done) { G.prog++; if (G.prog >= 3) complete(); } }
 
-addEventListener('keydown', e => { if (!playing || e.repeat) return;
+addEventListener('keydown', e => { if (!playing || e.repeat || e.target.tagName == 'INPUT') return;
   if (e.code == 'KeyE') interact(); else if (e.code == 'KeyH') whistle(); else if (e.code == 'Space') attack();
   else if (/^Digit[1-5]$/.test(e.code)) { const i = +e.code[5] - 1; if (slots()[i][1] && i != G.slot) { G.slot = i; G.equipT = 0; G.swing = null; G.phoneLook = false; drawInv(); } } });
 addEventListener('wheel', e => { if (playing) setSlot(G.slot + (e.deltaY > 0 ? 1 : -1)); }, { passive: true });
 canvas.addEventListener('mousedown', e => { if (playing && e.button == 0 && document.pointerLockElement === canvas) attack(); });
-document.getElementById('start').addEventListener('click', () => { audio(); drawInv(); drawMission(); });
 
 /* 손 움직임: 꺼내기, 걸을 때 흔들림, 칼 휘두르기, 총 반동 */
 const sm = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -285,7 +310,7 @@ function animateHands(dt, moving) {
   strapArm.visible = strapHand.visible = !!G.strap;
   if (G.strap) { const sh = new THREE.Vector3(pos.x - Math.cos(yaw) * 0.2, camera.position.y - 0.24, pos.z + Math.sin(yaw) * 0.2), rg = new THREE.Vector3(G.strap.x, 1.655, G.strap.z), d = rg.clone().sub(sh), L = d.length();
     strapArm.position.copy(sh).addScaledVector(d, 0.5); strapArm.scale.set(1, L, 1); strapArm.quaternion.setFromUnitVectors(_up, d.normalize()); strapHand.position.copy(rg); }
-  G.punch += (0 - G.punch) * Math.min(1, dt * 9); flash.intensity = Math.max(0, flash.intensity - dt * 220);
+  G.punch += (0 - G.punch) * Math.min(1, dt * 9); flashK = Math.max(0, flashK - dt * 14); renderer.toneMappingExposure = EXPOSURE * (1 + 0.4 * flashK);
   for (let i = fx.length - 1; i >= 0; i--) { const f = fx[i]; f.t += dt; const u = f.t / f.life; if (u >= 1) { scene.remove(f.o); f.o.material.dispose(); if (f.o.geometry && f.o.isMesh) f.o.geometry.dispose(); fx.splice(i, 1); } else f.upd(f, u, dt); }
 }
 
@@ -294,7 +319,7 @@ function gameUpdate(dt, f, moving, run) {
   G.cool -= dt; G.wCool -= dt; animateHands(G.freeze ? 0 : dt, moving);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) ui.toast.style.opacity = 0; }
   if (G.glowT > 0) { G.glowT -= dt; ui.glow.style.opacity = 1; ui.glow.textContent = `위치 노출 중 · ${Math.max(0, G.glowT).toFixed(1)}초`; } else ui.glow.style.opacity = 0;
-  if (G.seatWait) { const w = G.seatWait; w.t += dt; if (w.t > 1.0) sitNow(w.sp); }
+  if (G.seatWait) { G.seatWait.t += dt; if (G.seatWait.t > 4) G.seatWait = null; }
   if (G.boostT > 0) { const c = Math.ceil(G.boostT); G.boostT -= dt; if (Math.ceil(G.boostT) != c) drawInv(); if (G.boostT <= 0) { G.boostT = 0; toast('질주 효과가 끝났다', 1.4); drawInv(); } }
   pickT -= dt; if (pickT <= 0) { pickT = 25; refillPickups(); }
   for (const p of pickups) p.g.position.x = p.x + (p.frame == 't' ? offT : offS);
