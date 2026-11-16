@@ -114,7 +114,8 @@ function getBody(seed) { let P = bodies.get(seed); if (!P) { P = makePerson(seed
 function setBody(n, seed) { if (n.P && n.seed != seed) n.P.g.visible = false; n.seed = seed; n.P = getBody(seed); n.P.sq = null; n.wasVis = false; }
 function newBody(n) {
   if (n.P && spareSeeds.length) { const k = (Math.random() * spareSeeds.length) | 0, old = n.seed; setBody(n, spareSeeds[k]); spareSeeds[k] = old; } else if (!n.P) setBody(n, seedN++);
-  n.baseSpeed = (n.P.B.old ? 0.82 : 1) * (Math.random() < 0.12 ? rnd(1.45, 1.7) : rnd(0.9, 1.4)); n.speed = n.baseSpeed; n.gait = 0.8 + (n.baseSpeed - 0.8) * 0.45; n.gaitNow = n.gait;
+  n.baseSpeed = (n.P.B.old ? 0.86 : 1) * (Math.random() < 0.08 ? rnd(1.75, 1.95) : rnd(1.33, 1.66));      // 걷기 기준 1.5m/s(플레이어와 같다)
+  n.speed = n.baseSpeed; n.gait = 0.8 + (n.baseSpeed - 0.8) * 0.45; n.gaitNow = n.gait;
 }
 function moveNPC(n, dt) {
   const w = n.path[0], last = n.path.length == 1; let dx = w[0] - n.x, dz = w[1] - n.z; const d = Math.hypot(dx, dz);

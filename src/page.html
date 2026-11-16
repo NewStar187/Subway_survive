@@ -80,7 +80,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 /* ───────────── 진행 ───────────── */
 const pos = new THREE.Vector3(2.4, 1.48, 3.3); let yaw = 0, pitch = -0.02;
 let playing = false, doorTarget = 0, doorT = 0, leaves = [];
-const keys = {}; const R = 0.27;
+const keys = {}; const R = 0.27, WALK = 1.5;      // 걷기 속도(m/s). AI 승객의 평균 걸음과 맞춘다
 const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
 
 function collide(p, R = 0.27) {
@@ -118,7 +118,7 @@ function tick(dt) {
 }
 function movePlayer(dt, f, s, run) {
     const len = Math.hypot(f, s), wasInside = pos.z < -0.2; let moving = false;
-    if ((G.alive || G.ghost) && len > 0) { if (G.seat) standUp(); else if (G.strap) letGo(); else if (!G.seatWait) { f /= len; s /= len; const sp = (run ? 4.0 * (G.boostT > 0 ? 2 : 1) : 1.9) * dt, ox = pos.x, oz = pos.z, n = Math.ceil(sp / 0.12);
+    if ((G.alive || G.ghost) && len > 0) { if (G.seat) standUp(); else if (G.strap) letGo(); else if (!G.seatWait) { f /= len; s /= len; const sp = (run ? 4.0 * (G.boostT > 0 ? 2 : 1) : WALK) * dt, ox = pos.x, oz = pos.z, n = Math.ceil(sp / 0.12);
       for (let k = 0; k < n; k++) { pos.x += (-Math.sin(yaw) * f + Math.cos(yaw) * s) * sp / n; pos.z += (-Math.cos(yaw) * f - Math.sin(yaw) * s) * sp / n; pushFromNPCs(); collide(pos); }     // 빠를 때는 잘게 나눠 움직여 벽을 뚫지 않는다
       bob += Math.min(sp, 4.0 * dt) * 3.3; moving = Math.hypot(pos.x - ox, pos.z - oz) > sp * 0.3; } }
     else if (!G.seat && !G.strap) { pushFromNPCs(); collide(pos); }
