@@ -1472,7 +1472,7 @@ document.getElementById('code').addEventListener('keydown', e => { if (e.key == 
 /* ───────────── 승객 시뮬레이션 ───────────── */
 const NPC_MAX = 200, NPC_SPARE = 16, NPC_Q = 0.55, NPC_LOD = 0.25, SEAT_H = 0.46, RING_Y = 1.665, OPEN_T = 26, CLOSED_T = 64;
 const npcs = [], rnd = (a, b) => a + (b - a) * Math.random(), rint = n => (Math.random() * n) | 0;
-let NPC_N = 120; const npcCount = n => Math.min(NPC_MAX, 40 * n);      // 칸 수에 따른 승객 수
+let NPC_N = 120; const npcCount = n => Math.min(134, Math.round(80 / 3 * n));      // 칸 수에 따른 승객 수
 const groundY = x => { const a = Math.abs(x) - HP; return a > 0.3 ? Math.min(16, (a - 0.3) / 0.3) * 0.17 : 0; };
 // 자리: 좌석, 손잡이, 반대편 문 옆
 const seats = [], straps = [], stands = [], doorInfo = [];
