@@ -48,10 +48,11 @@ function showResult(text) { netUI.result.style.display = 'flex'; netUI.result.in
 function makeRoom(name, tries = 0) {
   if (!window.Peer) return menuMsg('이 환경에서는 방을 만들 수 없습니다. GitHub 주소로 접속해 주세요.');
   menuMsg('방을 만드는 중…'); const code = genCode(), peer = new Peer(ROOM_PREFIX + code, peerOpts());
+  setTimeout(() => { if (!NET.peer && !peer.destroyed) { try { peer.destroy(); } catch (e) {} menuMsg('방을 만들지 못했습니다. 접속 중개 서버에 닿지 않습니다. GitHub 주소로 접속했는지, 네트워크가 막혀 있지 않은지 확인해 주세요.'); } }, 12000);
   peer.on('open', () => { NET.peer = peer; NET.solo = false; NET.mode = 'host'; NET.id = 'host'; NET.code = code; NET.started = false; NET.over = false; NET.hold = true; phase = 'closed'; phaseT = 2.5; doorTarget = 0;
     NET.members = [{ id: 'host', name, host: true, spec: false, alive: true, seed: seedN++, st: null }]; resetGame(); enterWorld(); drawLobby(); });
   peer.on('connection', c => { c.on('data', d => { if (d && d.t == 'hello') hostHello(c, d); else if (c.pid) hostHandle(c.pid, d); }); c.on('close', () => { if (c.pid) dropMember(c.pid); }); });
-  peer.on('error', e => { if (e.type == 'unavailable-id' && tries < 4) { peer.destroy(); makeRoom(name, tries + 1); } else if (!NET.peer) menuMsg('방을 만들지 못했습니다 (' + e.type + '). 잠시 뒤 다시 시도해 주세요.'); });
+  peer.on('error', e => { if (e.type == 'unavailable-id' && tries < 4) { peer.destroy(); makeRoom(name, tries + 1); } else if (!NET.peer) { try { peer.destroy(); } catch (x) {} menuMsg('방을 만들지 못했습니다 (' + e.type + '). 잠시 뒤 다시 시도해 주세요.'); } });
 }
 function joinRoom(code, name) {
   if (!window.Peer) return menuMsg('이 환경에서는 방에 참여할 수 없습니다. GitHub 주소로 접속해 주세요.');
