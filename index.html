@@ -1478,7 +1478,7 @@ const groundY = x => { const a = Math.abs(x) - HP; return a > 0.3 ? Math.min(16,
 const seats = [], straps = [], stands = [], doorInfo = [];
 function makeSpots() {
   seats.length = straps.length = stands.length = doorInfo.length = 0;
-  doorXs.forEach((x, i) => doorInfo.push({ x, i, car: i >> 2, lines: [[], []], alight: [], tB: [0, 0], tA: 0 }));
+  doorXs.forEach((x, i) => doorInfo.push({ x, i, car: i >> 2, lines: [[], []], alight: [], tB: [0, 0], tA: 0, gA: 0.8, gB: [1.1, 1.1] }));
   CARS.forEach((c, ci) => {
     for (const [zw, s] of [[-0.24, -1], [-3.16, 1]]) {
       const add = (x0, x1, n) => { const w = (x1 - x0) / n; for (let i = 0; i < n; i++) { const x = x0 + (i + 0.5) * w;
@@ -1499,6 +1499,7 @@ const running = () => NET.solo ? G.alive && G.boarded : NET.started && !NET.over
 let phase = 'closed', phaseT = 11, approached = false, simT = 0, seedN = 9000 + ((Math.random() * 1e6) | 0);
 const slotPos = (d, side, k) => [d.x + (side ? 0.78 : -0.78), 1.15 + k * 0.62];
 const settled = n => n.state == 'seated' || n.state == 'strap' || n.state == 'stand';
+const crossX = x => { for (const q of PLAT.pillars) if (Math.abs(x - q) < 0.85) return q + (x < q ? -0.95 : 0.95); return x; };      // 기둥 줄을 가로지를 때 기둥을 피한 x
 
 function pickSpot(car, x) {
   const mc = minCar(), r = Math.random(), kinds = r < 0.62 ? ['seat', 'strap', 'stand'] : r < 0.9 ? ['strap', 'seat', 'stand'] : ['stand', 'strap', 'seat'];
@@ -1508,16 +1509,16 @@ function pickSpot(car, x) {
   return null;
 }
 // 객실 안에서는 통로 가운데를 따라 우측통행으로 움직인다
-function trainPath(n, tx, tz) { const p = [], dir = Math.sign(tx - n.x) || 1, lane = -1.7 - dir * 0.17; if (Math.abs(tx - n.x) > 0.7) p.push([n.x + dir * 0.2, lane], [tx - dir * 0.2, lane]); p.push([tx, tz]); return p; }
+function trainPath(n, tx, tz) { const p = [], dir = Math.sign(tx - n.x) || 1, lane = -1.7 - dir * (n.lw || 0.17); if (Math.abs(tx - n.x) > 0.7) p.push([n.x + dir * 0.2, lane], [tx - dir * 0.2, lane]); p.push([tx, tz]); return p; }
 function goToSpot(n, sp) {
   if (!sp) { const mc = minCar();                      // 빈자리가 없다: 닫힐 칸에 있으면 운행하는 칸 통로로 옮겨 선다
     if (n.z < -0.1 && n.x < CARS[mc] - 9.5) { n.state = 'tospot'; n.path = trainPath(n, CARS[mc] + rnd(-8.5, 8.5), ZC + rnd(-0.3, 0.3)); n.onArrive = () => { n.state = 'stand'; n.yawT = rnd(-3, 3); }; }
     else { n.state = 'stand'; n.yawT = n.yaw; } return; }
   n.spot = sp; sp.occ = n; n.state = 'tospot';
-  const tx = sp.kind == 'seat' ? sp.ax : sp.kind == 'strap' ? sp.rx - Math.cos(sp.yaw) * n.P.B.sx * n.P.s : sp.x, tz = sp.kind == 'seat' ? sp.az : sp.z;
+  const loose = sp.kind == 'stand', tx = sp.kind == 'seat' ? sp.ax : sp.kind == 'strap' ? sp.rx - Math.cos(sp.yaw) * n.P.B.sx * n.P.s : sp.x + rnd(-0.14, 0.14), tz = sp.kind == 'seat' ? sp.az : sp.z + (loose ? rnd(-0.1, 0.16) : 0);
   n.path = trainPath(n, tx, tz);
   n.onArrive = () => {
-    if (sp.kind == 'seat') { n.state = 'sitdown'; n.tr = 0; n.from = [n.x, n.z]; n.to = [sp.x, sp.z]; n.yawT = sp.yaw; } else { n.state = sp.kind; n.yawT = sp.yaw; }
+    if (sp.kind == 'seat') { n.state = 'sitdown'; n.tr = 0; n.from = [n.x, n.z]; n.to = [sp.x, sp.z]; n.yawT = sp.yaw; } else { n.state = sp.kind; n.yawT = n.by = sp.yaw + (loose ? rnd(-0.7, 0.7) : 0); }
     n.phone = Math.random() < (sp.kind == 'seat' ? 0.6 : 0.4); n.tP = rnd(15, 60); n.tR = rnd(50, 170);
   };
 }
@@ -1530,14 +1531,16 @@ function goAlight(n) {            // 내릴 사람은 문이 열리기 전에 �
   d.alight.push(n);
   leaveSpot(n, () => {
     if (!d.alight.includes(n)) { goToSpot(n, pickSpot(n.car, n.x)); return; }
-    const j = d.alight.indexOf(n); n.state = 'toexit'; n.path = trainPath(n, d.x + (j % 2 ? -0.24 : 0.24), -0.74 - (j >> 1) * 0.52);
-    n.onArrive = () => { n.state = 'waitdoor'; n.yawT = 0; };
+    const j = d.alight.indexOf(n); n.state = 'toexit'; n.path = trainPath(n, d.x + (j % 2 ? -0.24 : 0.24) + rnd(-0.11, 0.11), -0.74 - (j >> 1) * 0.5 + rnd(-0.1, 0.1));
+    n.onArrive = () => { n.state = 'waitdoor'; n.yawT = rnd(-0.35, 0.35); };
   });
 }
-function exitTrain(n, d) {         // 줄 사이 가운데로 내려서 가까운 계단으로 나간다
-  const end = Math.random() < 0.5 + clamp(d.x / (HP * 1.5), -0.42, 0.42) ? 1 : -1, zs = rnd(2.5, 3.6), lane = rnd(3.35, 3.85);
-  n.state = 'leave'; n.speed = n.baseSpeed * 1.08;
-  n.path = [[d.x, 0.5], [d.x + rnd(-0.15, 0.15), 3.3], [d.x + end * 1.3, lane], [end * (HP - 1.4), lane], [end * (HP + 0.5), zs], [end * (HP + 5.25), zs]];
+function exitTrain(n, d) {         // 내려서 계단으로 나간다. 걷는 줄·꺾는 곳·기둥 앞뒤가 사람마다 다르다
+  const end = Math.random() < 0.5 + clamp(d.x / (HP * 1.5), -0.42, 0.42) ? 1 : -1, back = Math.random() < 0.3, lane = back ? rnd(5.45, 6.4) : rnd(3.2, 4.1), zs = back ? rnd(4.5, 5.8) : rnd(2.4, 3.7), x1 = d.x + end * rnd(0.6, 3.2);
+  n.state = 'leave'; n.speed = n.baseSpeed * rnd(0.98, 1.2);
+  n.path = [[d.x + rnd(-0.25, 0.25), 0.55], [d.x + end * rnd(0, 0.5), rnd(2.3, 3.0)]];
+  if (back) { const cx = crossX(x1); n.path.push([cx, 4.05], [cx, 5.3]); }
+  n.path.push([x1 + end * 1.6, lane], [end * (HP - 1.4 - rnd(0, 2.5)), lane], [end * (HP + 0.5), zs], [end * (HP + 5.25), zs]);
   n.onArrive = () => { n.state = 'gone'; n.timer = rnd(3, 22); };
 }
 function board(n, d, sd) {
@@ -1558,16 +1561,23 @@ function freeNPC(n) {              // 자리와 줄에서 뺀다
 }
 function arriveAt(n) {             // 문 앞에 도착하면 짧은 줄에 선다. 줄이 길면 옆 문으로 간다
   if (lastMode()) return walkAway(n); if (n.door.car < minCar()) return reroute(n);
-  const d = n.door, side = d.lines[0].length <= d.lines[1].length ? 0 : 1;
+  const d = n.door;
+  if (!n.loitered && phase == 'closed' && phaseT > 14 && Math.random() < 0.38) { n.loitered = true; n.state = 'loiter'; n.joinT = rnd(1.5, 11);      // 줄에 바로 서지 않고 근처에서 기다린다
+    const far = Math.random() < 0.3, x = d.x + rnd(-2.4, 2.4); n.path = far ? [[crossX(x), 4.05], [crossX(x), rnd(5.35, 6.3)]] : [[x, rnd(2.5, 4.1)]];
+    n.onArrive = () => { n.by = n.yawT = Math.PI + rnd(-1.1, 1.1); n.phone = Math.random() < 0.6; n.tP = rnd(10, 40); }; return; }
+  const side = Math.random() < 0.8 ? (d.lines[0].length <= d.lines[1].length ? 0 : 1) : rint(2);
   if (d.lines[side].length >= 4 && n.tries < 4) { n.tries++; const j = clamp(d.i + (Math.random() < 0.5 ? -1 : 1), minCar() * 4, doorInfo.length - 1); n.door = doorInfo[j]; n.path = [[n.door.x + rnd(-0.3, 0.3), n.z]]; n.onArrive = () => arriveAt(n); return; }
-  d.lines[side].push(n); n.side = side; n.state = 'queue'; n.phone = Math.random() < 0.55; n.tP = rnd(10, 40);
+  d.lines[side].push(n); n.side = side; n.state = 'queue'; n.loitered = false; n.jx = rnd(-0.17, 0.17); n.jz = rnd(-0.13, 0.13); n.jy = rnd(-0.4, 0.4); n.phone = Math.random() < 0.55; n.tP = rnd(10, 40);
 }
 function spawnArrive(n) {          // 계단으로 내려와 승강장으로 들어온다
-  const end = Math.random() < 0.5 ? 1 : -1, lane = rnd(3.35, 3.85);
-  n.x = end * (HP + 5.2); n.z = rnd(4.6, 5.7); n.y = groundY(n.x); n.yaw = n.yawT = -end * Math.PI / 2;
+  const end = Math.random() < 0.5 ? 1 : -1;
+  n.x = end * (HP + 5.2); n.z = rnd(2.4, 5.8); n.y = groundY(n.x); n.yaw = n.yawT = -end * Math.PI / 2;
   const lo = minCar() * 4, cnt = doorInfo.length - lo, half = cnt >> 1;       // 운행하는 칸의 문 가운데, 내려온 계단에서 가까운 쪽을 더 자주 고른다
   n.door = doorInfo[lo + (Math.random() < 0.6 ? (end > 0 ? half + rint(cnt - half) : rint(half)) : rint(cnt))];
-  n.tries = 0; n.speed = n.baseSpeed; n.state = 'arrive'; n.path = [[end * (HP + 0.5), n.z], [end * (HP - 1.6), lane], [n.door.x + rnd(-0.3, 0.3), lane]]; n.onArrive = () => arriveAt(n);
+  n.tries = 0; n.loitered = false; n.speed = n.baseSpeed * rnd(0.92, 1.12); n.state = 'arrive'; const dx = n.door.x + rnd(-0.3, 0.3);
+  if (Math.random() < 0.3) { const bl = rnd(5.45, 6.4), cx = crossX(dx - end * rnd(0, 2.5)); n.z = rnd(4.6, 5.8); n.path = [[end * (HP + 0.5), n.z], [end * (HP - 1.6), bl], [cx + end * 1.2, bl], [cx, 5.3], [cx, 4.05], [dx, rnd(3.2, 3.9)]]; }      // 기둥 뒤쪽으로 걷다가 문 앞에서 건너온다
+  else { const l2 = rnd(3.2, 4.1); n.z = rnd(2.4, 5.6); n.path = [[end * (HP + 0.5), n.z], [end * (HP - 1.6 - rnd(0, 2)), l2], [dx - end * rnd(0.5, 3), l2 + rnd(-0.25, 0.25)], [dx, rnd(3.2, 3.9)]]; }
+  n.y = groundY(n.x); n.onArrive = () => arriveAt(n);
 }
 // 몸은 미리 만들어 두고 돌려 쓴다. 떠난 승객의 몸은 예비 몸과 바꿔서, 게임 도중에는 새로 만들지 않는다
 const bodies = new Map(), spareSeeds = [];
@@ -1575,7 +1585,7 @@ function getBody(seed) { let P = bodies.get(seed); if (!P) { P = makePerson(seed
 function setBody(n, seed) { if (n.P && n.seed != seed) n.P.g.visible = false; n.seed = seed; n.P = getBody(seed); n.P.sq = null; n.wasVis = false; }
 function newBody(n) {
   if (n.P && spareSeeds.length) { const k = (Math.random() * spareSeeds.length) | 0, old = n.seed; setBody(n, spareSeeds[k]); spareSeeds[k] = old; } else if (!n.P) setBody(n, seedN++);
-  n.baseSpeed = (n.P.B.old ? 0.82 : 1) * rnd(1.0, 1.35); n.speed = n.baseSpeed; n.gait = 0.8 + (n.baseSpeed - 0.8) * 0.45; n.gaitNow = n.gait;
+  n.baseSpeed = (n.P.B.old ? 0.82 : 1) * (Math.random() < 0.12 ? rnd(1.45, 1.7) : rnd(0.9, 1.4)); n.speed = n.baseSpeed; n.gait = 0.8 + (n.baseSpeed - 0.8) * 0.45; n.gaitNow = n.gait;
 }
 function moveNPC(n, dt) {
   const w = n.path[0], last = n.path.length == 1; let dx = w[0] - n.x, dz = w[1] - n.z; const d = Math.hypot(dx, dz);
@@ -1588,7 +1598,7 @@ function moveNPC(n, dt) {
   if (n.ghostT <= 0) { for (const o of npcs) { if (o === n || o.state == 'gone' || o.state == 'dead' || o.state == 'seated' || Math.abs(o.y - n.y) > 0.5) continue; avoid(o.x - n.x, o.z - n.z, !o.moving); }
     if (playing && G.alive && Math.abs(groundY(pos.x) - n.y) < 0.5) avoid(pos.x - n.x, pos.z - n.z, true);
     for (const o of others.values()) if (o.state != 'dead' && o.pose != 1 && Math.abs(o.y - n.y) < 0.5) avoid(o.x - n.x, o.z - n.z, !o.moving); }
-  const l = Math.hypot(vx, vz) || 1, sp = n.speed * slow * Math.min(1, d / 0.3 + 0.35); vx /= l; vz /= l;
+  const l = Math.hypot(vx, vz) || 1, sp = n.speed * slow * Math.min(1, d / 0.3 + 0.35) * (1 + 0.1 * Math.sin(simT * 0.9 + n.walkT * 0.37)); vx /= l; vz /= l;
   n.x += vx * sp * dt; n.z += vz * sp * dt; collide(n, 0.2);
   n.moving = true; n.walkT += dt * sp * (0.87 / n.P.s) / n.gait; n.gaitNow = n.gait * clamp(sp / 0.9, 0.45, 1); n.yawT = Math.atan2(vx, vz);
   // 막혀서 못 가면 잠시 사람 사이를 비집고 지나간다
@@ -1598,7 +1608,7 @@ function announceClosing() {       // 방장: 다음 역에서 닫힐 칸을 정
   closing = firstOpen;
   for (const n of npcs) n.evT = rnd(2, 24);
   for (const d of doorInfo) if (d.car <= closing) for (const l of d.lines) for (const n of l.splice(0)) { if (lastMode()) walkAway(n); else reroute(n); }
-  if (lastMode()) for (const n of npcs) if (n.state == 'queue' || n.state == 'arrive') walkAway(n);
+  if (lastMode()) for (const n of npcs) if (n.state == 'queue' || n.state == 'arrive' || n.state == 'loiter') walkAway(n);
 }
 function hostCloseCars(k) {        // 방장: 닫히는 칸에 남은 승객·물건을 치우고 칸을 닫는다
   const xb = CARS[k] - 9.85; let gone = false;
@@ -1612,22 +1622,23 @@ function hostCloseCars(k) {        // 방장: 닫히는 칸에 남은 승객·�
 function updateNPCs(dt) {
   if (!isHost()) return clientNPCs(dt);
   simT += dt; phaseT -= dt; if (NET.hold) phaseT = Math.max(phaseT, 2.5);      // 로비에서는 열차가 문을 닫고 서 있는다
-  if (phase == 'closed' && !approached && phaseT < 9) { approached = true; for (const n of npcs) if (settled(n) && --n.stops <= 0) goAlight(n); }
+  if (phase == 'closed' && !approached && phaseT < 9) { approached = true; for (const n of npcs) if (settled(n) && --n.stops <= 0) n.goT = Math.random() < 0.25 ? rnd(8.5, 13) : rnd(0.1, 7.5); }
   if (phase == 'closed' && closing >= 0 && phaseT <= 3) { const k = closing + 1; closing = -1; hostCloseCars(k); }      // 열차가 서는 순간 꼬리칸을 닫는다
   if (phaseT <= 0) {
     if (phase == 'closed') { phase = 'open'; phaseT = OPEN_T; doorTarget = 1; }
     else { phase = 'closed'; phaseT = CLOSED_T; doorTarget = 0; approached = false; onDoorsClosed();
       if (running()) { gameRound++; if (firstOpen < CARS.length - 1) announceClosing(); }      // 출발하면서 다음 역에서 닫힐 칸을 알린다
-      for (const d of doorInfo) { const left = d.alight.slice(); d.alight.length = 0; for (const n of left) { n.stops = 1; if (n.state == 'toexit' || n.state == 'waitdoor') { n.path = []; goToSpot(n, pickSpot(n.car, n.x)); } } } }
+      for (const d of doorInfo) { const left = d.alight.slice(); d.alight.length = 0; for (const n of npcs) if (n.goT > 0) { n.goT = 0; n.stops = 1; }
+      for (const n of left) { n.stops = 1; if (n.state == 'toexit' || n.state == 'waitdoor') { n.path = []; goToSpot(n, pickSpot(n.car, n.x)); } } } }
   }
   let room = 0; if (phase == 'open' && !lastMode()) { const N = CARS.length, safe = firstOpen + (firstOpen < N - 1 ? 1 : 0); room = (N - safe) * 76;      // 다음 역에서 닫힐 칸을 뺀 정원까지만 태운다(칸이 줄어도 넘치지 않게)
     for (const n of npcs) if ((n.z < -0.1 && n.state != 'gone' && n.state != 'dead' && n.state != 'toexit' && n.state != 'waitdoor') || n.state == 'board') room--; }
   if (phase == 'open' && doorT > 0.9) for (const d of doorInfo) { if (d.car < firstOpen) continue;
-    if (phaseT > 3 && simT - d.tA > 0.8) { const i = d.alight.findIndex(a => a.state == 'waitdoor'); if (i >= 0) { const n = d.alight.splice(i, 1)[0]; d.tA = simT; exitTrain(n, d); } }
+    if (phaseT > 3 && simT - d.tA > d.gA) { const i = d.alight.findIndex(a => a.state == 'waitdoor'); if (i >= 0) { const n = d.alight.splice(i, 1)[0]; d.tA = simT; d.gA = rnd(0.4, 1.3); exitTrain(n, d); } }
     if (phaseT > 5 && (d.alight.length == 0 || OPEN_T - phaseT > 9)) for (let sd = 0; sd < 2; sd++) { const n = d.lines[sd][0];
-      if (room > 0 && n && simT - d.tB[sd] > 1.1 && simT - d.tA > 1.2 && n.state == 'queue' && !n.path.length) { const sl = slotPos(d, sd, 0); if (Math.hypot(n.x - sl[0], n.z - sl[1]) < 0.3) { d.lines[sd].shift(); d.tB[sd] = simT; room--; board(n, d, sd ? 1 : -1); } } }
+      if (room > 0 && n && simT - d.tB[sd] > d.gB[sd] && simT - d.tA > 1.2 && n.state == 'queue' && !n.path.length) { const sl = slotPos(d, sd, 0); if (Math.hypot(n.x - sl[0], n.z - sl[1]) < 0.5) { d.lines[sd].shift(); d.tB[sd] = simT; d.gB[sd] = rnd(0.6, 1.9); room--; board(n, d, sd ? 1 : -1); } } }
   }
-  let rebuilt = false, waiting = 0; for (const n of npcs) if (n.state == 'queue' || n.state == 'arrive') waiting++;
+  let rebuilt = false, waiting = 0; for (const n of npcs) if (n.state == 'queue' || n.state == 'arrive' || n.state == 'loiter') waiting++;
   const full = lastMode() || waiting >= (CARS.length - minCar()) * 24;      // 탈 수 있는 문 수에 견줘 승강장이 붐비면 더 내려오지 않는다
   for (const n of npcs) {
     if (n.state == 'dead') { n.deadT += dt; continue; }
@@ -1636,9 +1647,14 @@ function updateNPCs(dt) {
     if (n.state == 'sitdown' || n.state == 'standup') {
       n.tr = Math.min(1, n.tr + dt / 0.8); const k = n.tr * n.tr * (3 - 2 * n.tr); n.x = lerp(n.from[0], n.to[0], k); n.z = lerp(n.from[1], n.to[1], k);
       if (n.tr >= 1) { if (n.state == 'sitdown') n.state = 'seated'; else { n.state = 'free'; const cb = n.after; n.after = null; cb && cb(); } }
-    } else if (n.path.length) moveNPC(n, dt);
-    else if (n.state == 'queue') { const sl = slotPos(n.door, n.side, n.door.lines[n.side].indexOf(n)); if (Math.hypot(n.x - sl[0], n.z - sl[1]) > 0.14) n.path = [sl]; else n.yawT = Math.PI; }
-    if (settled(n) || n.state == 'queue') { n.tP -= dt; if (n.tP <= 0) { n.phone = !n.phone; n.tP = n.phone ? rnd(25, 90) : rnd(8, 40); } }
+    } else if (n.pauseT > 0) { n.pauseT -= dt; if (n.pauseT <= 0) n.phone = false; }      // 걷다가 잠깐 멈춰 휴대폰을 본다
+    else if (n.path.length) { moveNPC(n, dt); if (n.state == 'arrive' && n.z > 1 && Math.abs(n.x) < HP - 2 && Math.random() < dt * 0.012) { n.pauseT = rnd(0.8, 2.6); n.phone = true; } }
+    else if (n.state == 'queue') { const sl = slotPos(n.door, n.side, n.door.lines[n.side].indexOf(n)), tx = sl[0] + n.jx, tz = sl[1] + n.jz; if (Math.hypot(n.x - tx, n.z - tz) > 0.16) n.path = [[tx, tz]]; else n.yawT = Math.PI + n.jy; }
+    else if (n.state == 'loiter' && (phase == 'open' || phaseT < n.joinT || n.door.car < minCar())) { n.state = 'arrive'; n.path = [[n.door.x + rnd(-0.4, 0.4), rnd(3.1, 3.6)]]; n.onArrive = () => arriveAt(n); }      // 열차가 올 때쯤 줄로 간다
+    if (n.goT > 0) { n.goT -= dt; if (n.goT <= 0) { if (settled(n)) goAlight(n); else n.goT = 0.3; } }
+    if (!n.path.length && (n.state == 'queue' || n.state == 'loiter' || n.state == 'stand')) { n.tF -= dt;      // 가만히 서 있을 때도 가끔 고개와 몸을 돌린다
+      if (n.tF <= 0) { n.tF = rnd(2.5, 11); const k = Math.random() < 0.2 ? 1.1 : 0.45; if (n.state == 'queue') n.jy = rnd(-k, k); else n.yawT = (n.by ?? n.yaw) + rnd(-k, k); } }
+    if (settled(n) || n.state == 'queue' || n.state == 'loiter') { n.tP -= dt; if (n.tP <= 0) { n.phone = !n.phone; n.tP = n.phone ? rnd(25, 90) : rnd(8, 40); } }
     if (settled(n) && phase == 'closed' && phaseT > 12) { n.tR -= dt;        // 가끔 다른 칸이나 다른 자리로 옮긴다
       if (n.tR <= 0) { n.tR = rnd(60, 180); const car2 = clamp(n.car + (Math.random() < 0.5 ? -1 : 1), minCar(), CARS.length - 1), sp = pickSpot(car2, CARS[car2] + rnd(-7, 7)); if (sp) { sp.occ = n; leaveSpot(n, () => goToSpot(n, sp)); } } }
     let dy = n.yawT - n.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); n.yaw += dy * Math.min(1, dt * 9);
@@ -1669,7 +1685,7 @@ function drawNPCs(dt, t) {
     const dx = rx - pos.x, dz = n.z - pos.z, d2 = dx * dx + dz * dz, vis = d2 < 16 || (d2 < 4900 && dx * fx + dz * fz > 0.42 * Math.sqrt(d2));
     g.visible = vis; if (!vis) { n.wasVis = false; continue; }
     const pose = n.moving ? 'walk' : (n.state == 'seated' || n.state == 'sitdown') ? 'sit' : n.state == 'strap' ? 'strap' : 'idle';
-    poseBody(n.P, n, rx, d2, dt, t, i, pose, 'none', { phone: n.phone && !n.moving && (settled(n) || n.state == 'queue'), walkT: n.walkT, gait: n.gaitNow, seat: SEAT_H, ringY: RING_Y, ringZ: 0.14 });
+    poseBody(n.P, n, rx, d2, dt, t, i, pose, 'none', { phone: n.phone && !n.moving && (settled(n) || n.state == 'queue' || n.state == 'loiter'), walkT: n.walkT, gait: n.gaitNow, seat: SEAT_H, ringY: RING_Y, ringZ: 0.14 });
     n.wasVis = true;
   }
   i = drawPlayers(dt, t, i, fx, fz);
@@ -1678,7 +1694,7 @@ function drawNPCs(dt, t) {
 function pushFromNPCs() { if (G.ghost) return; const gy = groundY(pos.x);
   for (const o of others.values()) { if (o.state == 'dead' || o.pose == 1 || Math.abs(o.y - gy) > 0.5) continue; const dx = pos.x - o.x, dz = pos.z - o.z, d = Math.hypot(dx, dz); if (d < 0.46 && d > 1e-4) { pos.x += dx / d * (0.46 - d) * 0.6; pos.z += dz / d * (0.46 - d) * 0.6; } }
   for (const n of npcs) { if (n.state == 'gone' || n.state == 'dead' || n.state == 'seated' || Math.abs(n.y - gy) > 0.5) continue; const dx = pos.x - n.x, dz = pos.z - n.z, d = Math.hypot(dx, dz); if (d < 0.46 && d > 1e-4) { pos.x += dx / d * (0.46 - d) * 0.6; pos.z += dz / d * (0.46 - d) * 0.6; } } }
-const makeNPC = () => ({ x: 0, z: 0, y: 0, yaw: 0, yawT: 0, state: 'gone', timer: rnd(1, 22), path: [], walkT: Math.random() * 9, ghostT: 0, stuckT: 0, stuckN: 0, sx: 0, sz: 0, phone: false, tP: rnd(5, 40), tR: rnd(8, 150), stops: 1 + rint(3), car: 0, tries: 0, evT: 0 });
+const makeNPC = () => ({ x: 0, z: 0, y: 0, yaw: 0, yawT: 0, state: 'gone', timer: rnd(1, 22), path: [], walkT: Math.random() * 9, ghostT: 0, stuckT: 0, stuckN: 0, sx: 0, sz: 0, phone: false, tP: rnd(5, 40), tR: rnd(8, 150), stops: 1 + rint(3), car: 0, tries: 0, evT: 0, goT: 0, pauseT: 0, tF: rnd(1, 9), jx: 0, jz: 0, jy: 0, lw: rnd(0.05, 0.32) });
 async function sizeNPCs(count, onProgress) {      // 승객 수를 늘린다. 몸은 모자란 만큼만 새로 만든다
   const pause = () => new Promise(r => setTimeout(r)); let k = 0;
   while (npcs.length < count) { const n = makeNPC();
@@ -1693,11 +1709,11 @@ function placeNPCs() {             // 방장: 승객을 처음 자리에 놓는�
   for (const list of [seats, straps, stands]) for (const sp of list) sp.occ = null;
   const N = CARS.length, inTrain = Math.round(npcs.length * 0.633), queued = Math.round(npcs.length * 0.25);
   npcs.forEach((n, i) => {
-    Object.assign(n, { state: 'gone', timer: rnd(1, 22), path: [], onArrive: null, after: null, spot: null, phone: false, ghostT: 0, stuckT: 0, stuckN: 0, y: 0, moving: false, stops: 1 + rint(3), tries: 0, evT: 0, deadT: 0, speed: n.baseSpeed, wasVis: false });
-    if (i < inTrain) { const car = i % N, sp = pickSpot(car, CARS[car] + rnd(-9, 9)); n.car = car; n.spot = sp; sp.occ = n; n.yaw = n.yawT = sp.yaw; n.phone = Math.random() < 0.5;
+    Object.assign(n, { state: 'gone', timer: rnd(1, 22), path: [], onArrive: null, after: null, spot: null, phone: false, ghostT: 0, stuckT: 0, stuckN: 0, y: 0, moving: false, stops: 1 + rint(3), tries: 0, evT: 0, deadT: 0, speed: n.baseSpeed, wasVis: false, goT: 0, pauseT: 0, loitered: false, jx: rnd(-0.17, 0.17), jz: rnd(-0.13, 0.13), jy: rnd(-0.4, 0.4), by: null });
+    if (i < inTrain) { const car = i % N, sp = pickSpot(car, CARS[car] + rnd(-9, 9)); n.car = car; n.spot = sp; sp.occ = n; n.yaw = n.yawT = n.by = sp.yaw + (sp.kind == 'stand' ? rnd(-0.7, 0.7) : 0); n.phone = Math.random() < 0.5;
       if (sp.kind == 'seat') { n.x = sp.x; n.z = sp.z; n.state = 'seated'; } else if (sp.kind == 'strap') { n.x = sp.rx - Math.cos(sp.yaw) * n.P.B.sx * n.P.s; n.z = sp.z; n.state = 'strap'; } else { n.x = sp.x; n.z = sp.z; n.state = 'stand'; } }
     else if (i < inTrain + queued) { let d, side; do { d = doorInfo[rint(doorInfo.length)]; side = rint(2); } while (d.lines[side].length >= 3);
-      const sl = slotPos(d, side, d.lines[side].length); d.lines[side].push(n); n.door = d; n.side = side; n.x = sl[0]; n.z = sl[1]; n.yaw = n.yawT = Math.PI; n.state = 'queue'; n.phone = Math.random() < 0.55; }
+      const sl = slotPos(d, side, d.lines[side].length); d.lines[side].push(n); n.door = d; n.side = side; n.x = sl[0] + n.jx; n.z = sl[1] + n.jz; n.yaw = n.yawT = Math.PI + n.jy; n.state = 'queue'; n.phone = Math.random() < 0.55; }
   });
 }
 
@@ -1855,7 +1871,7 @@ function refillPickups(full) {       // 방장. full: 새 판을 시작할 때 �
 
 /* ───────────── 미션 ───────────── */
 const COND = [['마스크를 쓴', n => n.P.tags.mask], ['안경을 쓴', n => n.P.tags.glasses], ['모자를 쓴', n => !!n.P.tags.hat], ['백팩을 멘', n => n.P.tags.bag == 'back'], ['헤드폰을 쓴', n => n.P.tags.ear == 'phones'],
-  ['패딩을 입은', n => n.P.tags.top.includes('puffer')], ['코트를 입은', n => n.P.tags.top == 'coat'], ['앉아 있는', n => n.state == 'seated'], ['휴대폰을 보고 있는', n => n.phone && (settled(n) || n.state == 'queue')]];
+  ['패딩을 입은', n => n.P.tags.top.includes('puffer')], ['코트를 입은', n => n.P.tags.top == 'coat'], ['앉아 있는', n => n.state == 'seated'], ['휴대폰을 보고 있는', n => n.phone && (settled(n) || n.state == 'queue' || n.state == 'loiter')]];
 const MISSION = { 1: ['5초 동안 뛰기', 5, '초'], 2: ['호차 3번 옮기기', 3, '번'], 3: ['서로 다른 의자 3개에 앉기', 3, '개'], 4: ['뒤로 3초 걷기', 3, '초'], 5: ['다음 정차역에서 내려 자판기에서 음료수 사오기'], 6: ['휘파람(H) 3번 불기', 3, '번'], 7: ['아무 승객이나 처치'], 8: ['수집 2번 하기', 2, '번'], 9: [''], 10: [''] };
 const alive = n => n.state != 'dead' && n.state != 'gone';
 function pickMission() {             // 지금 수행할 수 있는 미션 가운데 하나를 고른다
@@ -2200,7 +2216,7 @@ const pickupMsg = () => ({ t: 'pk', l: pickups.map(p => [p.id, p.type == 'bullet
 function sendPickups() { if (NET.conns.size) { const m = pickupMsg(); for (const c of NET.conns.values()) if (c.open) c.send(m); } }
 function buildSnap() {
   const n = new Array(npcs.length * 5); let k = 0;
-  for (const q of npcs) { const st = q.state, code = (st == 'gone' ? 0 : st == 'dead' ? 4 : st == 'strap' ? 3 : (st == 'seated' || st == 'sitdown') ? 2 : 1) | (q.moving ? 8 : 0) | (q.phone && !q.moving && (settled(q) || st == 'queue') ? 16 : 0);
+  for (const q of npcs) { const st = q.state, code = (st == 'gone' ? 0 : st == 'dead' ? 4 : st == 'strap' ? 3 : (st == 'seated' || st == 'sitdown') ? 2 : 1) | (q.moving ? 8 : 0) | (q.phone && !q.moving && (settled(q) || st == 'queue' || st == 'loiter') ? 16 : 0);
     n[k++] = q.seed; n[k++] = Math.round(q.x * 100); n[k++] = Math.round(q.z * 100); n[k++] = Math.round(q.yaw * 100); n[k++] = code; }
   const p = []; for (const m of NET.members) { const st = m.alive ? m.st : m.body; if (st && !(st[6] & 8)) p.push([m.id, m.seed, m.alive ? 1 : 0, ...st]); }
   return { t: 's', c: CARS.length, fo: firstOpen, cl: closing, ph: phase == 'open' ? 1 : 0, pt: +phaseT.toFixed(2), n, p };

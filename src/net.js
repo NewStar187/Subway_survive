@@ -119,7 +119,7 @@ const pickupMsg = () => ({ t: 'pk', l: pickups.map(p => [p.id, p.type == 'bullet
 function sendPickups() { if (NET.conns.size) { const m = pickupMsg(); for (const c of NET.conns.values()) if (c.open) c.send(m); } }
 function buildSnap() {
   const n = new Array(npcs.length * 5); let k = 0;
-  for (const q of npcs) { const st = q.state, code = (st == 'gone' ? 0 : st == 'dead' ? 4 : st == 'strap' ? 3 : (st == 'seated' || st == 'sitdown') ? 2 : 1) | (q.moving ? 8 : 0) | (q.phone && !q.moving && (settled(q) || st == 'queue') ? 16 : 0);
+  for (const q of npcs) { const st = q.state, code = (st == 'gone' ? 0 : st == 'dead' ? 4 : st == 'strap' ? 3 : (st == 'seated' || st == 'sitdown') ? 2 : 1) | (q.moving ? 8 : 0) | (q.phone && !q.moving && (settled(q) || st == 'queue' || st == 'loiter') ? 16 : 0);
     n[k++] = q.seed; n[k++] = Math.round(q.x * 100); n[k++] = Math.round(q.z * 100); n[k++] = Math.round(q.yaw * 100); n[k++] = code; }
   const p = []; for (const m of NET.members) { const st = m.alive ? m.st : m.body; if (st && !(st[6] & 8)) p.push([m.id, m.seed, m.alive ? 1 : 0, ...st]); }
   return { t: 's', c: CARS.length, fo: firstOpen, cl: closing, ph: phase == 'open' ? 1 : 0, pt: +phaseT.toFixed(2), n, p };

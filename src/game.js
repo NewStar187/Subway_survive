@@ -151,7 +151,7 @@ function refillPickups(full) {       // 방장. full: 새 판을 시작할 때 �
 
 /* ───────────── 미션 ───────────── */
 const COND = [['마스크를 쓴', n => n.P.tags.mask], ['안경을 쓴', n => n.P.tags.glasses], ['모자를 쓴', n => !!n.P.tags.hat], ['백팩을 멘', n => n.P.tags.bag == 'back'], ['헤드폰을 쓴', n => n.P.tags.ear == 'phones'],
-  ['패딩을 입은', n => n.P.tags.top.includes('puffer')], ['코트를 입은', n => n.P.tags.top == 'coat'], ['앉아 있는', n => n.state == 'seated'], ['휴대폰을 보고 있는', n => n.phone && (settled(n) || n.state == 'queue')]];
+  ['패딩을 입은', n => n.P.tags.top.includes('puffer')], ['코트를 입은', n => n.P.tags.top == 'coat'], ['앉아 있는', n => n.state == 'seated'], ['휴대폰을 보고 있는', n => n.phone && (settled(n) || n.state == 'queue' || n.state == 'loiter')]];
 const MISSION = { 1: ['5초 동안 뛰기', 5, '초'], 2: ['호차 3번 옮기기', 3, '번'], 3: ['서로 다른 의자 3개에 앉기', 3, '개'], 4: ['뒤로 3초 걷기', 3, '초'], 5: ['다음 정차역에서 내려 자판기에서 음료수 사오기'], 6: ['휘파람(H) 3번 불기', 3, '번'], 7: ['아무 승객이나 처치'], 8: ['수집 2번 하기', 2, '번'], 9: [''], 10: [''] };
 const alive = n => n.state != 'dead' && n.state != 'gone';
 function pickMission() {             // 지금 수행할 수 있는 미션 가운데 하나를 고른다
